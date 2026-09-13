@@ -1,0 +1,43 @@
+# Interface web PhotoGram.
+#
+# Installation :
+#   sudo cp deploy/photogram-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now photogram-web
+
+[Unit]
+Description=PhotoGram — interface web
+Documentation=https://github.com/vira19/PhotoGram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=photogram
+Group=photogram
+WorkingDirectory=/opt/photogram
+EnvironmentFile=/opt/photogram/.env
+ExecStart=/opt/photogram/.venv/bin/uvicorn app.main:app \
+    --host ${PHOTOGRAM_HOST} --port ${PHOTOGRAM_PORT} \
+    --workers 1 --proxy-headers --no-access-log
+Restart=on-failure
+RestartSec=5
+
+# Un seul worker uvicorn : les requetes sont breves et le travail lourd vit
+# dans photogram-worker. Multiplier les processus ne ferait que consommer la
+# memoire dont le calcul a besoin.
+
+# Le web doit survivre a la pression memoire : c'est lui qui affiche l'erreur.
+OOMScoreAdjust=-200
+
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/photogram
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block titre %}{{ projet.name }} — PhotoGram{% endblock %}
+
+{% block contenu %}
+  <p class="discret" style="margin:22px 0 0"><a href="/">← Tous les projets</a></p>
+  <h1>{{ projet.name }}</h1>
+  {% if projet.description %}<p class="aide">{{ projet.description }}</p>{% endif %}
+
+  {% if flash %}
+    <div class="message {{ 'succes' if flash.acceptees and not flash.rejetees else 'alerte' }}">
+      {% if flash.acceptees %}{{ flash.acceptees }} photo(s) ajoutee(s).{% endif %}
+      {% if flash.rejetees %}
+        <ul>{% for motif in flash.rejetees %}<li>{{ motif }}</li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="carte">
+    <div class="stats">
+      <div class="stat">
+        <div class="valeur"><span data-compteur-retenues>{{ stats.retenues }}</span> / {{ stats.total }}</div>
+        <div class="libelle">Photos retenues</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ stats.octets | bytes }}</div>
+        <div class="libelle">Espace occupe</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ (stats.nettete_moyenne or 0) | round(0) | int }}</div>
+        <div class="libelle">Nettete moyenne</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="carte">
+    <h2>Ajouter des photos</h2>
+    <p class="aide">
+      Formats acceptes : JPEG, PNG, TIFF — {{ max_upload_mb }} Mio par fichier au maximum.
+      Chaque photo est conservee telle quelle, et une copie reduite a {{ work_max_dim }} px
+      est fabriquee pour le calcul. Limite : {{ max_photos }} photos retenues par reconstruction.
+    </p>
+    <form method="post" action="/projects/{{ projet.id }}/photos" enctype="multipart/form-data">
+      <div class="champ">
+        <input type="file" name="files" multiple accept=".jpg,.jpeg,.png,.tif,.tiff" required data-apercu="#apercu-fichiers">
+        <p class="discret" id="apercu-fichiers" style="margin:6px 0 0"></p>
+      </div>
+      <button type="submit">Televerser</button>
+    </form>
+  </div>
+
+  {% if photos %}
+    <div class="carte">
+      <h2>Photos ({{ photos | length }})</h2>
+      <p class="aide">
+        La pastille indique la nettete mesuree (variance du laplacien). En dessous de
+        {{ seuil_nettete | int }}, l'image est probablement floue : une seule photo floue peut
+        suffire a faire echouer le positionnement des cameras.
+      </p>
+      <form method="post" action="/projects/{{ projet.id }}/photos/auto-select" class="barre-actions" style="margin-bottom:16px">
+        <input type="hidden" name="seuil" value="{{ seuil_nettete }}">
+        <button class="secondaire" type="submit">Ecarter automatiquement les photos floues</button>
+      </form>
+      <div class="grille-photos">
+        {% for photo in photos %}
+          {% include "partials/photo_card.html" %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="carte">
+    <h2>Lancer une reconstruction</h2>
+    {% if stats.retenues < 5 %}
+      <p class="aide">Il faut au moins 5 photos retenues. Il y en a actuellement {{ stats.retenues }}.</p>
+    {% endif %}
+    {% set aucun_dispo = dispo_presets.values() | rejectattr('disponible') | list | length == dispo_presets | length %}
+    {% if aucun_dispo %}
+      <div class="message erreur">
+        Aucune chaine de reconstruction n'est installee sur cette machine.
+        Voyez <a href="/health">l'etat du systeme</a> pour le detail, puis lancez
+        <span class="mono">scripts/install_pipeline.sh</span>.
+      </div>
+    {% endif %}
+    <form method="post" action="/projects/{{ projet.id }}/jobs">
+      <div class="champ">
+        <label for="preset">Profil de qualite</label>
+        <select id="preset" name="preset">
+          {% for cle, preset in presets.items() %}
+            <option value="{{ cle }}"
+                    {% if not dispo_presets[cle].disponible %}disabled{% elif cle == projet.preset %}selected{% endif %}>
+              {{ preset.label }}{% if not dispo_presets[cle].disponible %} — indisponible{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% for cle, preset in presets.items() %}
+        <p class="discret" style="margin:0 0 8px">
+          <strong>{{ preset.label }}</strong> — {{ preset.description }}
+          {% if preset.warning %}<br><span style="color:var(--alerte)">⚠ {{ preset.warning }}</span>{% endif %}
+          {% if not dispo_presets[cle].disponible %}<br><span style="color:var(--erreur)">✕ {{ dispo_presets[cle].motif }}</span>{% endif %}
+        </p>
+      {% endfor %}
+      <button type="submit" {% if stats.retenues < 5 or aucun_dispo %}disabled{% endif %}>Mettre en file</button>
+    </form>
+  </div>
+
+  {% if jobs %}
+    <div class="carte">
+      <h2>Reconstructions</h2>
+      <div class="table-enveloppe">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Etat</th><th>Profil</th><th>Photos</th><th>Etape</th><th>Lancee le</th></tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+              <tr>
+                <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td><span class="etat etat-{{ job.status }}">{{ status_label(job.status) }}</span></td>
+                <td>{{ presets[job.preset].label if job.preset in presets else job.preset }}</td>
+                <td>{{ job.photo_count }}</td>
+                <td class="discret">{{ job.current_step or '—' }}</td>
+                <td class="discret">{{ job.created_at | datetime }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+
+  <details class="carte">
+    <summary style="cursor:pointer; font-weight:650">Conseils de prise de vue</summary>
+    <ul class="aide" style="margin-top:12px">
+      <li><strong>Recouvrement de 60 a 80 %</strong> entre deux photos consecutives : tournez autour du sujet par petits pas, sans « sauter » de position.</li>
+      <li><strong>Eclairage diffus et constant.</strong> Les ombres dures se figent dans la texture ; le soleil direct et le flash sont a proscrire.</li>
+      <li><strong>Sujet texture.</strong> Une surface unie, brillante ou transparente ne donne aucun point caracteristique. Une moucheture de talc ou un spray mat sauve les objets difficiles.</li>
+      <li><strong>Mise au point et exposition figees</strong> si votre appareil le permet : un changement de focale en cours de serie brouille la calibration.</li>
+      <li><strong>Le sujet ne bouge pas, l'appareil tourne.</strong> Poser l'objet sur un plateau tournant devant un fond fixe donne des resultats incoherents, sauf a masquer le fond.</li>
+      <li><strong>Trois hauteurs de prise de vue</strong> (au niveau, en plongee, en contre-plongee) valent mieux qu'un seul tour horizontal.</li>
+    </ul>
+  </details>
+
+  <div class="carte">
+    <h2>Zone dangereuse</h2>
+    <form method="post" action="/projects/{{ projet.id }}/delete"
+          data-confirmer="Supprimer le projet « {{ projet.name }} », ses photos et toutes ses reconstructions ?">
+      <button class="danger" type="submit">Supprimer ce projet</button>
+    </form>
+  </div>
+{% endblock %}

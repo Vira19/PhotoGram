@@ -1,0 +1,44 @@
+{# Fragment rafraichi toutes les quelques secondes tant que le job tourne. #}
+{% if not en_cours %}<span data-termine hidden></span>{% endif %}
+
+<div class="barre-actions" style="margin-bottom:10px">
+  <span class="etat etat-{{ job.status }}">{{ status_label(job.status) }}</span>
+  {% if job.status == 'running' and job.cancel_requested %}
+    <span class="discret">Annulation demandee, arret en cours…</span>
+  {% elif job.current_step %}
+    <span class="discret">{{ job.current_step }}</span>
+  {% endif %}
+</div>
+
+{% if job.step_total %}
+  <div class="progression">
+    <div style="width: {{ (100 * (job.step_index + (1 if job.status == 'done' else 0)) / job.step_total) | round(1) }}%"></div>
+  </div>
+{% endif %}
+
+{% if job.error %}
+  <div class="message erreur">{{ job.error }}</div>
+{% endif %}
+
+{% if steps %}
+  <ol class="etapes">
+    {% for step in steps %}
+      <li class="{{ step.status }}">
+        <span class="numero">
+          {%- if step.status == 'done' -%}✓
+          {%- elif step.status == 'failed' -%}✕
+          {%- elif step.status == 'skipped' -%}~
+          {%- else -%}{{ loop.index }}{%- endif -%}
+        </span>
+        <span>{{ step.name }}</span>
+        <span class="duree">
+          {%- if step.status == 'running' -%}en cours
+          {%- elif step.duration_s -%}{{ step.duration_s | duration }}
+          {%- else -%}—{%- endif -%}
+        </span>
+      </li>
+    {% endfor %}
+  </ol>
+{% else %}
+  <p class="discret">En attente du worker. Les etapes apparaitront des le demarrage.</p>
+{% endif %}

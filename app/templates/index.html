@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block titre %}Projets — PhotoGram{% endblock %}
+
+{% block contenu %}
+  <h1>Projets</h1>
+  <p class="aide">
+    Un projet regroupe les photos d'un meme sujet et l'historique de ses reconstructions.
+  </p>
+
+  <div class="carte">
+    <h2>Nouveau projet</h2>
+    <form method="post" action="/projects">
+      <div class="grille-champs">
+        <div class="champ">
+          <label for="name">Nom du sujet</label>
+          <input type="text" id="name" name="name" required maxlength="120" placeholder="Buste en platre">
+        </div>
+        <div class="champ">
+          <label for="preset">Profil de qualite par defaut</label>
+          <select id="preset" name="preset">
+            {% for cle, preset in presets.items() %}
+              <option value="{{ cle }}" {% if cle == preset_defaut %}selected{% endif %}>{{ preset.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="champ">
+        <label for="description">Notes (facultatif)</label>
+        <textarea id="description" name="description" placeholder="Conditions de prise de vue, materiel, remarques..."></textarea>
+      </div>
+      <button type="submit">Creer le projet</button>
+    </form>
+  </div>
+
+  {% if projets %}
+    <div class="grille-projets">
+      {% for projet in projets %}
+        <a class="carte" href="/projects/{{ projet.id }}" style="display:block; margin:0">
+          <h2>{{ projet.name }}</h2>
+          <p class="discret" style="margin:2px 0 10px">
+            {{ projet.nb_photos }} photo{{ 's' if projet.nb_photos != 1 }} ·
+            {{ projet.nb_jobs }} reconstruction{{ 's' if projet.nb_jobs != 1 }}
+          </p>
+          {% if projet.dernier_statut %}
+            <span class="etat etat-{{ projet.dernier_statut }}">{{ status_label(projet.dernier_statut) }}</span>
+          {% else %}
+            <span class="discret">Aucune reconstruction lancee</span>
+          {% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="carte vide">
+      Aucun projet pour l'instant. Creez-en un ci-dessus, puis televersez vos photos.
+    </div>
+  {% endif %}
+
+  <div class="carte">
+    <h2>Machine</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="valeur">{{ systeme.memoire.available | bytes }}</div>
+        <div class="libelle">RAM libre / {{ systeme.memoire.total | bytes }}</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ systeme.disque.free | bytes }}</div>
+        <div class="libelle">Disque libre</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ "%.2f"|format(systeme.charge[0]) }}</div>
+        <div class="libelle">Charge ({{ systeme.cpus }} coeurs)</div>
+      </div>
+      {% if systeme.temperature %}
+        <div class="stat">
+          <div class="valeur">{{ systeme.temperature }} °C</div>
+          <div class="libelle">Temperature SoC</div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

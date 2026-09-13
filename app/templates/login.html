@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion — PhotoGram</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="conteneur" style="max-width:400px">
+  <h1 style="margin-top:64px">Photo<span style="color:var(--accent)">Gram</span></h1>
+  <p class="aide">Photogrammetrie auto-hebergee. Acces reserve au reseau local.</p>
+
+  {% if config_incomplete %}
+    <div class="message alerte">
+      <strong>Configuration incomplete</strong>
+      <ul>{% for probleme in config_incomplete %}<li>{{ probleme }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  {% if erreur %}<div class="message erreur">{{ erreur }}</div>{% endif %}
+
+  <form class="carte" method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="champ">
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" name="password" autofocus autocomplete="current-password" required>
+    </div>
+    <button type="submit" style="width:100%; justify-content:center">Se connecter</button>
+  </form>
+</main>
+</body>
+</html>

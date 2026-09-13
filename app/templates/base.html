@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titre %}PhotoGram{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#128444;</text></svg>">
+</head>
+<body>
+<header class="site">
+  <div class="conteneur">
+    <a class="marque" href="/">Photo<span>Gram</span></a>
+    <nav>
+      <a href="/">Projets</a>
+      <a href="/health">Etat du systeme</a>
+      <form method="post" action="/logout" style="margin:0">
+        <button class="secondaire" type="submit">Deconnexion</button>
+      </form>
+    </nav>
+  </div>
+</header>
+
+<main class="conteneur">
+  {% block contenu %}{% endblock %}
+</main>
+
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

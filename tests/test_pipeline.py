@@ -1,0 +1,348 @@
+"""Pipeline et worker, joues avec des binaires factices.
+
+Installer OpenMVG et OpenMVS pour tester l'orchestration serait disproportionne :
+on remplace les binaires par des scripts qui produisent les memes fichiers, ce
+qui verifie l'enchainement des etapes, la detection de version, la collecte des
+resultats et la gestion des echecs.
+
+Les stubs et les fixtures qui les activent vivent dans conftest.py, car les
+tests web en ont besoin eux aussi pour mettre un job en file.
+"""
+
+from __future__ import annotations
+
+import pytest
+from conftest import STUB, TOUS_LES_BINAIRES, activer_stubs, installer_stubs
+
+from app import db, worker
+from app.config import settings
+from app.pipeline.binaries import detect_toolchain
+from app.pipeline.plan import PlanContext, build_plan
+from app.pipeline.presets import get_preset
+
+
+def preparer_projet(client, photo_jpeg, nombre=6, preset="sparse") -> int:
+    reponse = client.post(
+        "/projects", data={"name": "Sujet", "description": "", "preset": preset},
+        follow_redirects=False,
+    )
+    project_id = int(reponse.headers["location"].rsplit("/", 1)[1])
+    fichiers = [
+        ("files", (f"IMG_{i:04d}.jpg", photo_jpeg(graine=i), "image/jpeg"))
+        for i in range(nombre)
+    ]
+    client.post(f"/projects/{project_id}/photos", files=fichiers, follow_redirects=False)
+    return project_id
+def mettre_en_file(project_id: int, preset: str) -> int:
+    retenues = db.fetch_one(
+        "SELECT COUNT(*) AS n FROM photos WHERE project_id = ? AND included = 1", (project_id,)
+    )["n"]
+    return db.execute(
+        "INSERT INTO jobs (project_id, status, preset, photo_count, created_at) "
+        "VALUES (?, 'queued', ?, ?, ?)",
+        (project_id, preset, retenues, db.now()),
+    )
+
+
+# --- Detection de la chaine ----------------------------------------------
+
+
+def test_detection_openmvg_moderne(chaine_factice):
+    tools = detect_toolchain()
+    assert tools.modern_openmvg is True
+    assert tools.has_openmvg and tools.has_openmvs
+    assert tools.missing() == []
+
+
+def test_detection_openmvg_ancien(tmp_path, monkeypatch):
+    """Sans PairGenerator ni main_SfM, on doit basculer sur le flux 1.x."""
+    anciens = [
+        "openMVG_main_SfMInit_ImageListing", "openMVG_main_ComputeFeatures",
+        "openMVG_main_ComputeMatches", "openMVG_main_IncrementalSfM",
+        "openMVG_main_ComputeSfM_DataColor", "openMVG_main_openMVG2openMVS",
+        "DensifyPointCloud", "ReconstructMesh", "TextureMesh",
+    ]
+    dossier = installer_stubs(tmp_path / "bin-ancien", anciens)
+    activer_stubs(dossier, monkeypatch)
+
+    tools = detect_toolchain()
+    assert tools.modern_openmvg is False
+    assert tools.missing() == []
+
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), tools, 1)
+    noms = [etape.name for etape in build_plan(ctx)]
+    assert "Generation des paires d'images" not in noms
+    assert "Mise en correspondance et filtrage" in noms
+
+
+def test_plan_sparse_ignore_openmvs(chaine_factice, tmp_path):
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 1)
+    noms = [etape.name for etape in build_plan(ctx)]
+    assert "Densification du nuage" not in noms
+    assert noms[-1] == "Collecte des resultats"
+
+
+def test_plan_complet_contient_openmvs(chaine_factice, tmp_path):
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("rpi"), detect_toolchain(), 1)
+    noms = [etape.name for etape in build_plan(ctx)]
+    assert "Densification du nuage" in noms
+    assert "Reconstruction du maillage" in noms
+    assert "Raffinement du maillage" not in noms  # desactive sur ce profil
+
+
+# --- Execution complete ---------------------------------------------------
+
+
+def test_job_sparse_aboutit(client_connecte, photo_jpeg, chaine_factice):
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    job = worker.claim_job()
+    assert job["id"] == job_id
+    worker.process_job(job)
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+
+    etapes = db.fetch_all("SELECT * FROM job_steps WHERE job_id = ? ORDER BY position", (job_id,))
+    assert etapes and all(e["status"] == "done" for e in etapes)
+
+    fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
+    assert "nuage_epars.ply" in fichiers
+
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "Reconstruction terminee avec succes" in journal
+
+
+def test_job_complet_produit_un_maillage(client_connecte, photo_jpeg, chaine_factice):
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="rpi")
+    job_id = mettre_en_file(project_id, "rpi")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+
+    fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
+    assert {"dense.ply", "mesh.ply", "texture.obj", "texture.mtl", "texture.png"} <= fichiers
+
+
+def test_intermediaires_nettoyes(client_connecte, photo_jpeg, chaine_factice):
+    """Les dossiers de travail doivent disparaitre : une carte SD se remplit vite."""
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="rpi")
+    job_id = mettre_en_file(project_id, "rpi")
+    worker.process_job(worker.claim_job())
+
+    job_dir = settings.job_dir(project_id, job_id)
+    assert not (job_dir / "mvs").exists()
+    assert not (job_dir / "mvg").exists()
+    assert not (job_dir / "images").exists()
+    assert (job_dir / "out").is_dir()
+
+
+def test_echec_binaire_marque_le_job(client_connecte, photo_jpeg, tmp_path, monkeypatch):
+    """Un binaire qui sort en erreur doit stopper le job et etre trace."""
+    noms = list(TOUS_LES_BINAIRES)
+    dossier = installer_stubs(tmp_path / "bin-ko", noms)
+    # Le detecteur de points caracteristiques echoue systematiquement.
+    (dossier / "openMVG_main_ComputeFeatures").write_text(
+        STUB.replace('nom = pathlib.Path(sys.argv[0]).name', 'nom = "ECHOUE"')
+    )
+    (dossier / "openMVG_main_ComputeFeatures").chmod(0o755)
+    activer_stubs(dossier, monkeypatch)
+
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "points caracteristiques" in resultat["error"]
+
+    etape = db.fetch_one(
+        "SELECT * FROM job_steps WHERE job_id = ? AND name LIKE '%caracteristiques%'", (job_id,)
+    )
+    assert etape["status"] == "failed"
+
+
+def test_sfm_sans_resultat_est_detecte(client_connecte, photo_jpeg, tmp_path, monkeypatch):
+    """Un SfM qui sort en code 0 sans rien produire ne doit pas passer inapercu."""
+    dossier = installer_stubs(tmp_path / "bin-vide", TOUS_LES_BINAIRES)
+    (dossier / "openMVG_main_SfM").write_text("#!/bin/sh\nexit 0\n")
+    (dossier / "openMVG_main_SfM").chmod(0o755)
+    activer_stubs(dossier, monkeypatch)
+
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "recouvrement" in resultat["error"]
+
+
+def test_binaires_absents_signales(client_connecte, photo_jpeg, tmp_path, monkeypatch):
+    dossier = installer_stubs(tmp_path / "bin-vide2", [])
+    activer_stubs(dossier, monkeypatch)
+
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "Binaires manquants" in resultat["error"]
+
+
+def test_job_orphelin_remis_en_file(client_connecte, photo_jpeg):
+    """Apres une coupure, un job 'running' doit repartir au lieu de rester fige."""
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+    db.execute("UPDATE jobs SET status = 'running', step_index = 3 WHERE id = ?", (job_id,))
+
+    worker.requeue_orphans()
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "queued" and resultat["step_index"] == 0
+
+
+def test_un_seul_worker_reclame_un_job(client_connecte, photo_jpeg):
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    mettre_en_file(project_id, "sparse")
+
+    premier = worker.claim_job()
+    second = worker.claim_job()
+    assert premier is not None
+    assert second is None, "un job deja reclame ne doit pas l'etre une seconde fois"
+
+
+def test_focale_de_repli_seulement_sans_exif(client_connecte, photo_jpeg):
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    assert worker.fallback_focal_px(project_id) is None  # les photos portent une focale
+
+    db.execute("UPDATE photos SET focal_mm = NULL WHERE project_id = ?", (project_id,))
+    repli = worker.fallback_focal_px(project_id)
+    assert repli is not None
+    # 1,2 x le cote long de la copie de travail (800 px ici).
+    assert repli == pytest.approx(1.2 * settings.work_max_dim, rel=0.02)
+
+
+# --- Backend COLMAP -------------------------------------------------------
+
+
+@pytest.fixture
+def chaine_colmap(tmp_path, monkeypatch):
+    """Seul COLMAP est installe : ni OpenMVG ni OpenMVS."""
+    dossier = installer_stubs(tmp_path / "bin-colmap", ["colmap"])
+    activer_stubs(dossier, monkeypatch)
+    return dossier
+
+
+def test_colmap_choisi_quand_openmvg_absent(chaine_colmap):
+    tools = detect_toolchain()
+    assert tools.has_colmap and not tools.has_openmvg
+    assert tools.backends() == ["colmap"]
+    assert tools.choose_backend("auto", sparse_only=True) == "colmap"
+    assert tools.missing_for("colmap", sparse_only=True) == []
+
+
+def test_openmvg_prefere_quand_les_deux_sont_la(tmp_path, monkeypatch):
+    dossier = installer_stubs(tmp_path / "bin-deux", TOUS_LES_BINAIRES + ["colmap"])
+    activer_stubs(dossier, monkeypatch)
+
+    tools = detect_toolchain()
+    assert tools.backends() == ["openmvg", "colmap"]
+    assert tools.choose_backend("auto", sparse_only=True) == "openmvg"
+    assert tools.choose_backend("colmap", sparse_only=True) == "colmap"
+
+
+def test_openmvs_non_requis_pour_un_profil_epars(tmp_path, monkeypatch):
+    """Un RPi n'ayant que le SfM d'OpenMVG doit pouvoir sortir un nuage epars."""
+    sans_mvs = [n for n in TOUS_LES_BINAIRES if n[0].islower() or n.startswith("openMVG")]
+    sans_mvs = [n for n in sans_mvs if n != "openMVG_main_openMVG2openMVS"]
+    dossier = installer_stubs(tmp_path / "bin-sans-mvs", sans_mvs)
+    activer_stubs(dossier, monkeypatch)
+
+    tools = detect_toolchain()
+    assert tools.missing_for("openmvg", sparse_only=True) == []
+    assert tools.missing_for("openmvg", sparse_only=False) != []
+
+
+def test_job_colmap_aboutit(client_connecte, photo_jpeg, chaine_colmap):
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+    fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
+    assert "nuage_epars.ply" in fichiers
+
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "Chaine utilisee : colmap" in journal
+
+
+def test_colmap_refuse_un_profil_maillage(client_connecte, photo_jpeg, chaine_colmap):
+    """Sans OpenMVS, demander un maillage doit echouer tot et clairement."""
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="rpi")
+    job_id = mettre_en_file(project_id, "rpi")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "nuage epars" in resultat["error"]
+    # L'echec doit survenir avant tout calcul : aucune etape ne doit avoir tourne.
+    assert db.fetch_all("SELECT * FROM job_steps WHERE job_id = ?", (job_id,)) == []
+
+
+def test_colmap_signale_une_serie_fragmentee(client_connecte, photo_jpeg, chaine_colmap, monkeypatch):
+    monkeypatch.setenv("STUB_COLMAP_MODELES", "3")
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "serie est fragmentee" in journal
+    # Le plus gros modele (le dernier ecrit par le stub) doit etre retenu.
+    assert "sparse/2" in journal
+
+
+def test_colmap_sans_modele_echoue(client_connecte, photo_jpeg, chaine_colmap, monkeypatch):
+    monkeypatch.setenv("STUB_COLMAP_MODELES", "0")
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "recouvrement" in resultat["error"]
+
+
+def test_orphelin_abandonne_apres_deux_tentatives(client_connecte, photo_jpeg):
+    """Un job qui tue le worker a chaque passage ne doit pas bloquer la file."""
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+    db.execute(
+        "UPDATE jobs SET status = 'running', attempts = ? WHERE id = ?",
+        (worker.MAX_TENTATIVES, job_id),
+    )
+
+    worker.requeue_orphans()
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "memoire" in resultat["error"]
+
+
+def test_compteur_de_tentatives_incremente(client_connecte, photo_jpeg):
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.claim_job()
+    assert db.fetch_one("SELECT attempts FROM jobs WHERE id = ?", (job_id,))["attempts"] == 1

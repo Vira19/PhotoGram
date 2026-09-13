@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block titre %}Visionneuse — reconstruction #{{ job.id }}{% endblock %}
+
+{% block contenu %}
+  <p class="discret" style="margin:22px 0 0"><a href="/jobs/{{ job.id }}">← Reconstruction #{{ job.id }}</a></p>
+  <h1>Visionneuse 3D</h1>
+
+  <div class="carte">
+    <div class="barre-actions" style="margin-bottom:12px">
+      {% for artifact in visionnables %}
+        <a class="bouton {{ '' if artifact.filename == choisi else 'secondaire' }}"
+           href="/jobs/{{ job.id }}/visionneuse?fichier={{ artifact.filename }}">
+          {{ artifact.filename }} <span style="opacity:.7; font-weight:400">({{ artifact.bytes | bytes }})</span>
+        </a>
+      {% endfor %}
+    </div>
+
+    <canvas id="scene"></canvas>
+    <p class="discret" id="statut" style="margin:10px 0 0">Initialisation…</p>
+    <p class="aide" style="margin-top:6px">
+      Clic gauche : pivoter · clic droit : deplacer · molette : zoomer.
+      Les textures ne sont pas rendues ici : pour un rendu texture, telechargez
+      le <span class="mono">.obj</span> avec son <span class="mono">.mtl</span> et ouvrez-le dans MeshLab.
+    </p>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/viewer.js"></script>
+<script>
+  PhotoGramViewer.charger(
+    document.getElementById("scene"),
+    "/jobs/{{ job.id }}/fichiers/{{ choisi }}?inline=1",
+    "{{ extension }}",
+    document.getElementById("statut")
+  );
+</script>
+{% endblock %}

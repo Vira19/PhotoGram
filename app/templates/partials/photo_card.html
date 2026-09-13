@@ -1,0 +1,30 @@
+{# Carte d'une photo. Rendue a l'affichage de la page et re-rendue seule apres
+   un clic sur « Retenir / Ecarter ». #}
+<div class="vignette {% if not photo.included %}ecartee{% endif %}" id="photo-{{ photo.id }}">
+  <a href="/photos/{{ photo.id }}/full" target="_blank" rel="noopener">
+    <img src="/photos/{{ photo.id }}/thumb" alt="{{ photo.original_name }}" loading="lazy">
+  </a>
+  {% if photo.sharpness is not none %}
+    <span class="pastille {% if photo.sharpness < seuil_nettete %}flou{% endif %}"
+          title="Variance du laplacien : plus la valeur est haute, plus l'image est nette.">
+      {{ photo.sharpness | round(0) | int }}
+    </span>
+  {% endif %}
+  <div class="infos">
+    <strong title="{{ photo.original_name }}">{{ photo.original_name }}</strong>
+    {{ photo.width }}×{{ photo.height }} · {{ photo.bytes | bytes }}<br>
+    {% if photo.camera %}{{ photo.camera }}{% else %}Appareil inconnu{% endif %}
+    {% if photo.focal_mm %} · {{ photo.focal_mm | round(0) | int }} mm{% else %} · <span title="Sans focale EXIF, la calibration part d'une estimation.">focale ?</span>{% endif %}
+  </div>
+  <div class="actions">
+    <button class="secondaire" type="button"
+            data-post="/photos/{{ photo.id }}/toggle"
+            data-remplace="#photo-{{ photo.id }}">
+      {{ "Ecarter" if photo.included else "Retenir" }}
+    </button>
+    <form method="post" action="/photos/{{ photo.id }}/delete" style="margin:0"
+          data-confirmer="Supprimer definitivement cette photo ?">
+      <button class="danger" type="submit">Supprimer</button>
+    </form>
+  </div>
+</div>

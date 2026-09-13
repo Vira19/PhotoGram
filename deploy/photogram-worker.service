@@ -1,0 +1,50 @@
+# Worker de reconstruction PhotoGram.
+#
+# Installation :
+#   sudo cp deploy/photogram-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now photogram-worker
+#
+# Pour deporter le calcul sur une machine plus puissante : installer le depot
+# et ce seul service la-bas, en pointant PHOTOGRAM_DATA_DIR vers le meme
+# volume (NFS, SMB) que le service web. Rien d'autre ne change.
+
+[Unit]
+Description=PhotoGram — worker de reconstruction
+Documentation=https://github.com/vira19/PhotoGram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=photogram
+Group=photogram
+WorkingDirectory=/opt/photogram
+EnvironmentFile=/opt/photogram/.env
+ExecStart=/opt/photogram/.venv/bin/python -m app.worker
+Restart=on-failure
+RestartSec=10
+
+# Le calcul cede le pas a l'interface : sans cela, une reconstruction rend le
+# site injoignable pendant des heures sur un RPi.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+
+# En cas de manque de memoire, l'OOM killer doit choisir le worker plutot que
+# le serveur web. Le job interrompu est repris au demarrage suivant.
+OOMScoreAdjust=600
+
+# Une etape en cours peut mettre du temps a s'arreter proprement.
+TimeoutStopSec=120
+KillMode=mixed
+
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/photogram
+
+[Install]
+WantedBy=multi-user.target

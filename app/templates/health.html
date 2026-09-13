@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block titre %}Etat du systeme — PhotoGram{% endblock %}
+
+{% block contenu %}
+  <h1>Etat du systeme</h1>
+  <p class="aide">Diagnostic de la machine et de la chaine de reconstruction. Egalement disponible en JSON (en-tete <span class="mono">Accept: application/json</span>).</p>
+
+  {% if sante.configuration %}
+    <div class="message erreur">
+      <strong>Configuration a corriger</strong>
+      <ul>{% for probleme in sante.configuration %}<li>{{ probleme }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <div class="carte">
+    <h2>Machine</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="valeur">{{ sante.systeme.memoire.available | bytes }}</div>
+        <div class="libelle">RAM libre / {{ sante.systeme.memoire.total | bytes }}</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ sante.systeme.memoire.swap_total | bytes }}</div>
+        <div class="libelle">Swap total</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ sante.systeme.disque.free | bytes }}</div>
+        <div class="libelle">Disque libre</div>
+      </div>
+      <div class="stat">
+        <div class="valeur">{{ "%.2f"|format(sante.systeme.charge[0]) }}</div>
+        <div class="libelle">Charge ({{ sante.systeme.cpus }} coeurs)</div>
+      </div>
+      {% if sante.systeme.temperature %}
+        <div class="stat">
+          <div class="valeur">{{ sante.systeme.temperature }} °C</div>
+          <div class="libelle">Temperature SoC</div>
+        </div>
+      {% endif %}
+    </div>
+    {% if sante.systeme.memoire.swap_total < 1073741824 and sante.systeme.memoire.total < 1610612736 %}
+      <div class="message alerte" style="margin-top:14px">
+        Moins de 1 Gio de swap sur une machine a faible memoire. Sur Raspberry Pi OS :
+        <span class="mono">CONF_SWAPSIZE=2048</span> dans <span class="mono">/etc/dphys-swapfile</span>,
+        puis <span class="mono">sudo systemctl restart dphys-swapfile</span>.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="carte">
+    <h2>Chaine de reconstruction</h2>
+    {% if sante.pipeline.openmvg and sante.pipeline.openmvs %}
+      <div class="message succes">
+        Chaine complete detectee : OpenMVG {{ sante.pipeline.version_openmvg }} + OpenMVS.
+        Tous les profils sont utilisables, jusqu'au maillage texture.
+      </div>
+    {% elif sante.pipeline.colmap %}
+      <div class="message alerte">
+        COLMAP detecte : le profil « Nuage epars seulement » fonctionne.
+        Les profils avec maillage demandent OpenMVG et OpenMVS, absents ici.
+      </div>
+    {% else %}
+      <div class="message erreur">
+        <strong>Aucune chaine installee</strong> — seul le televersement fonctionne.
+        Lancez <span class="mono">scripts/install_pipeline.sh</span>.
+      </div>
+    {% endif %}
+    {% if sante.pipeline.manquants %}
+      <p class="discret">Manquants pour la chaine complete :</p>
+      <ul class="discret">{% for binaire in sante.pipeline.manquants %}<li class="mono">{{ binaire }}</li>{% endfor %}</ul>
+    {% endif %}
+    <p class="discret">
+      Base de capteurs :
+      {% if sante.pipeline.sensor_db %}<span class="mono">{{ sante.pipeline.sensor_db }}</span>
+      {% else %}introuvable — la focale sera estimee, ce qui degrade la precision.{% endif %}
+    </p>
+    {% if sante.pipeline.trouves %}
+      <details>
+        <summary style="cursor:pointer" class="discret">Binaires detectes ({{ sante.pipeline.trouves | length }})</summary>
+        <div class="table-enveloppe" style="margin-top:10px">
+          <table>
+            <tbody>
+              {% for nom, chemin in sante.pipeline.trouves.items() %}
+                <tr><td class="mono">{{ nom }}</td><td class="mono discret">{{ chemin }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    {% endif %}
+  </div>
+
+  <div class="carte">
+    <h2>File d'attente</h2>
+    <div class="stats">
+      {% for cle, nombre in sante.worker.file.items() %}
+        <div class="stat">
+          <div class="valeur">{{ nombre }}</div>
+          <div class="libelle">{{ status_label(cle) }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    {% if sante.worker.en_cours %}
+      <p class="discret" style="margin-top:12px">
+        En cours : <a href="/jobs/{{ sante.worker.en_cours.id }}">reconstruction #{{ sante.worker.en_cours.id }}</a>
+        — {{ sante.worker.en_cours.current_step or 'demarrage' }}
+        (depuis {{ sante.worker.en_cours.started_at | datetime }})
+      </p>
+    {% elif sante.worker.file.queued %}
+      <div class="message alerte" style="margin-top:12px">
+        {{ sante.worker.file.queued }} job(s) en attente mais aucun en cours : le worker est peut-etre arrete.
+        Verifiez avec <span class="mono">systemctl status photogram-worker</span>.
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

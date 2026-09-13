@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block titre %}Reconstruction #{{ job.id }} — PhotoGram{% endblock %}
+
+{% block contenu %}
+  <p class="discret" style="margin:22px 0 0">
+    <a href="/projects/{{ job.project_id }}">← {{ job.project_name }}</a>
+  </p>
+  <h1>Reconstruction #{{ job.id }}</h1>
+  <p class="aide">
+    Profil « {{ preset.label }} » · {{ job.photo_count }} photos ·
+    mise en file le {{ job.created_at | datetime }}
+    {% if job.started_at %} · demarree le {{ job.started_at | datetime }}{% endif %}
+    {% if job.finished_at %} · terminee le {{ job.finished_at | datetime }}{% endif %}
+  </p>
+
+  <div class="carte">
+    <h2>Avancement</h2>
+    <div {% if en_cours %}data-poll="/jobs/{{ job.id }}/etat" data-poll-interval="3000"{% endif %}>
+      {% include "partials/job_state.html" %}
+    </div>
+  </div>
+
+  {% if artifacts %}
+    <div class="carte">
+      <h2>Resultats</h2>
+      <div class="table-enveloppe">
+        <table>
+          <thead><tr><th>Fichier</th><th>Type</th><th>Taille</th><th></th></tr></thead>
+          <tbody>
+            {% for artifact in artifacts %}
+              <tr>
+                <td class="mono">{{ artifact.filename }}</td>
+                <td class="discret">{{ artifact.kind }}</td>
+                <td class="discret">{{ artifact.bytes | bytes }}</td>
+                <td><a href="/jobs/{{ job.id }}/fichiers/{{ artifact.filename }}">Telecharger</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if visionnables %}
+        <p style="margin-top:14px">
+          <a class="bouton" href="/jobs/{{ job.id }}/visionneuse">Ouvrir la visionneuse 3D</a>
+        </p>
+      {% endif %}
+      <p class="aide" style="margin-top:12px">
+        Les fichiers <span class="mono">.ply</span> s'ouvrent dans MeshLab ou CloudCompare ;
+        un <span class="mono">.obj</span> texture s'accompagne de son <span class="mono">.mtl</span>
+        et de son image : telechargez les trois dans le meme dossier.
+      </p>
+    </div>
+  {% endif %}
+
+  <div class="carte">
+    <h2>Journal</h2>
+    <p class="aide">Sortie brute des outils. C'est ici que se lisent les causes d'echec.</p>
+    <pre class="journal" data-journal="/jobs/{{ job.id }}/journal"
+         {% if en_cours %}data-journal-actif data-poll-interval="4000"{% endif %}>Chargement…</pre>
+  </div>
+
+  <div class="carte">
+    <h2>Actions</h2>
+    <div class="barre-actions">
+      {% if en_cours %}
+        <form method="post" action="/jobs/{{ job.id }}/cancel" style="margin:0"
+              data-confirmer="Annuler cette reconstruction ?">
+          <button class="danger" type="submit">Annuler</button>
+        </form>
+      {% else %}
+        <form method="post" action="/projects/{{ job.project_id }}/jobs" style="margin:0">
+          <input type="hidden" name="preset" value="{{ job.preset }}">
+          <button class="secondaire" type="submit">Relancer avec le meme profil</button>
+        </form>
+        <form method="post" action="/jobs/{{ job.id }}/delete" style="margin:0"
+              data-confirmer="Supprimer cette reconstruction et tous ses fichiers ?">
+          <button class="danger" type="submit">Supprimer</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
