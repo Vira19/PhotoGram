@@ -1,3 +1,9 @@
 -r requirements.txt
-pytest==8.3.4
-httpx==0.28.1
+
+# Rechargement automatique d'uvicorn : utile en developpement, inutile (et
+# difficile a installer) sur un Raspberry Pi.
+watchfiles>=0.21
+
+pytest>=8.0
+httpx>=0.27
+pyflakes>=3.0

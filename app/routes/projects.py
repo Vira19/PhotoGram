@@ -160,9 +160,9 @@ async def delete_project(project_id: int):
 def _ingest(project_id: int, original_name: str, destination: Path, size: int) -> None:
     """Analyse une photo fraichement recue et l'enregistre en base.
 
-    Appele dans un thread : Pillow et numpy liberent le GIL pendant le gros du
-    travail, mais la decompression JPEG reste assez longue sur un RPi3 pour
-    figer la boucle d'evenements si on l'executait en ligne.
+    Appele dans un thread : Pillow libere le GIL pendant le gros du travail,
+    mais la decompression JPEG reste assez longue sur un RPi3 pour figer la
+    boucle d'evenements si on l'executait en ligne.
     """
     meta = imaging.read_meta(destination)
     score = imaging.sharpness_score(destination)

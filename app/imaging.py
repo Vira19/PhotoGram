@@ -4,6 +4,10 @@ Toutes les operations sont ecrites pour un RPi3 : on s'appuie sur le mode
 ``draft`` de Pillow, qui laisse le decodeur JPEG reduire l'image pendant la
 decompression.  Ouvrir une photo de 12 Mpx coute alors quelques Mo au lieu de
 plusieurs dizaines, et c'est plusieurs fois plus rapide.
+
+Pillow est la seule dependance native du projet, et volontairement : chaque
+paquet compile de plus est un paquet susceptible de n'avoir aucune roue
+precompilee pour l'architecture du Pi, donc de se recompiler sur place.
 """
 
 from __future__ import annotations
@@ -12,8 +16,7 @@ import math
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 from PIL.ExifTags import TAGS
 
 Image.MAX_IMAGE_PIXELS = 80_000_000  # garde-fou anti decompression bomb
@@ -102,11 +105,21 @@ def read_meta(path: Path) -> dict:
     return meta
 
 
+#: Laplacien 4-connexe. Le decalage de 128 recentre les valeurs signees dans
+#: l'intervalle 0-255 que Pillow sait representer : les fortes transitions
+#: saturent, ce qui comprime le haut de l'echelle sans gener le classement.
+_NOYAU_LAPLACIEN = ImageFilter.Kernel(
+    (3, 3), [0, -1, 0, -1, 4, -1, 0, -1, 0], scale=1, offset=128
+)
+
+
 def sharpness_score(path: Path) -> Optional[float]:
     """Variance du laplacien : plus c'est haut, plus l'image est nette.
 
-    Le laplacien est calcule a la main par decalages numpy ; cela evite de
-    tirer OpenCV ou SciPy, qui pesent lourd a installer sur un RPi3.
+    Calcule avec Pillow seul. Une version numpy serait un peu plus precise sur
+    les images tres floues, mais elle imposerait une dependance native de plus
+    a installer sur le Pi pour un gain nul : dans la zone qui nous interesse,
+    celle de la decision nette/flou, les deux mesures se valent.
     """
     try:
         with Image.open(path) as img:
@@ -114,21 +127,12 @@ def sharpness_score(path: Path) -> Optional[float]:
             img = ImageOps.exif_transpose(img) or img
             img = img.convert("L")
             img.thumbnail((SHARPNESS_SIZE, SHARPNESS_SIZE), Image.BILINEAR)
-            arr = np.asarray(img, dtype=np.float32)
+            if min(img.size) < 3:
+                return None
+            laplacien = img.filter(_NOYAU_LAPLACIEN)
+            return float(ImageStat.Stat(laplacien).var[0])
     except Exception:
         return None
-
-    if arr.ndim != 2 or min(arr.shape) < 3:
-        return None
-
-    lap = (
-        4.0 * arr[1:-1, 1:-1]
-        - arr[:-2, 1:-1]
-        - arr[2:, 1:-1]
-        - arr[1:-1, :-2]
-        - arr[1:-1, 2:]
-    )
-    return float(lap.var())
 
 
 def make_thumbnail(src: Path, dst: Path) -> None:

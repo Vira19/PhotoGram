@@ -20,12 +20,16 @@ set -euo pipefail
 MODE=${1:-colmap}
 SOURCES=/usr/local/src
 
+ETAPE="demarrage"
+trap 'echo >&2; echo "ECHEC pendant : $ETAPE (ligne $LINENO)" >&2; echo "Diagnostic : ./scripts/diagnose.sh" >&2; exit 1' ERR
+
 if [[ $EUID -ne 0 ]]; then
   echo "Ce script doit etre lance avec sudo." >&2
   exit 1
 fi
 
 installer_colmap() {
+  ETAPE="installation du paquet colmap"
   echo "==> Installation de COLMAP depuis les depots"
   apt-get update -qq
   if apt-get install -y --no-install-recommends colmap; then
@@ -67,6 +71,7 @@ ECHEC
   JOBS=1
   (( RAM_MO > 4000 )) && JOBS=$(nproc)
 
+  ETAPE="installation des dependances de compilation"
   echo "==> Dependances de compilation (compter un long moment)"
   apt-get update -qq
   apt-get install -y --no-install-recommends \
@@ -78,6 +83,7 @@ ECHEC
 
   mkdir -p "$SOURCES"
 
+  ETAPE="compilation d'OpenMVG"
   echo "==> OpenMVG"
   if [[ ! -d "$SOURCES/openMVG" ]]; then
     git clone --recursive --depth 1 https://github.com/openMVG/openMVG.git "$SOURCES/openMVG"
@@ -94,6 +100,7 @@ ECHEC
   echo "==> VCGlib (dependance d'OpenMVS, non compilee)"
   [[ -d "$SOURCES/vcglib" ]] || git clone --depth 1 https://github.com/cdcseacave/VCG.git "$SOURCES/vcglib"
 
+  ETAPE="compilation d'OpenMVS"
   echo "==> OpenMVS"
   if [[ ! -d "$SOURCES/openMVS" ]]; then
     git clone --recursive --depth 1 https://github.com/cdcseacave/openMVS.git "$SOURCES/openMVS"

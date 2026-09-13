@@ -31,7 +31,9 @@ qui est précisément le flux de travail que ce site vise.
 
 L'application web, elle, est parfaitement à l'aise sur un RPi3 : téléversement,
 analyse EXIF, détection de flou, vignettes, suivi des jobs et visionneuse 3D
-côté navigateur.
+côté navigateur. Ses dépendances sont tenues au strict minimum — **Pillow est
+le seul paquet natif** — précisément pour que l'installation ne dépende pas
+d'un compilateur.
 
 ## Architecture
 
@@ -83,6 +85,25 @@ cd PhotoGram
 sudo ./scripts/install.sh            # app, venv, services systemd, mot de passe généré
 sudo ./scripts/install_pipeline.sh   # COLMAP depuis les dépôts
 ```
+
+Si quelque chose échoue, le script indique l'étape exacte. Pour un état des
+lieux complet :
+
+```bash
+./scripts/diagnose.sh
+```
+
+Le rapport couvre le système, Python, les dépendances, les services, la chaîne
+de reconstruction et le réseau. Il ne contient ni mot de passe ni clé, et peut
+être copié tel quel dans un ticket.
+
+### Raspberry Pi OS 64 bits fortement conseillé
+
+Un RPi3 supporte le 64 bits, et c'est la configuration à privilégier :
+certaines dépendances Python (`pydantic-core`) n'ont pas de version
+précompilée pour les architectures 32 bits (`armv6l`, `armv7l`) et devraient
+alors être compilées avec Rust — ce qui échoue presque toujours sur un Pi.
+Vérifier avec `uname -m` : `aarch64` est le bon résultat.
 
 Le site écoute alors sur `http://<ip-du-pi>:8000`. Le mot de passe généré est
 affiché en fin d'installation et stocké dans `/opt/photogram/.env`.
@@ -176,8 +197,13 @@ C'est ici que tout se joue — bien plus que dans le choix du profil :
 
 ## Dépannage
 
+Premier réflexe : `./scripts/diagnose.sh`.
+
 | Symptôme | Piste |
 |---|---|
+| L'installation des dépendances Python échoue | Probablement un système 32 bits (`uname -m`). Voir ci-dessus. |
+| `rsync: command not found` | Corrigé : le script utilise désormais `tar`, présent partout. |
+| Le service démarre mais n'écrit rien | `PHOTOGRAM_DATA_DIR` hors de `ReadWritePaths` du service. Relancer `install.sh` le corrige. |
 | « Le SfM n'a produit aucune reconstruction » | Recouvrement insuffisant, sujet sans texture, ou photos floues. Regarder les scores de netteté. |
 | « série fragmentée » dans le journal | Deux groupes de photos sans lien visuel. Ajouter des vues de transition. |
 | Job repassé en échec après un redémarrage | Le worker a été tué (mémoire). Réduire le nombre de photos, prendre un profil plus léger, ajouter du swap. |
@@ -208,7 +234,7 @@ app/
   templates/         gabarits Jinja2
   static/            CSS, JS, visionneuse WebGL (aucune dépendance externe)
 deploy/              unités systemd
-scripts/             installation et développement
+scripts/             installation, diagnostic et développement
 tests/               parcours web, rendu des gabarits, pipeline complet
 ```
 

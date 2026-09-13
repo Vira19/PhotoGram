@@ -1,7 +1,19 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-jinja2==3.1.5
-python-multipart==0.0.20
-itsdangerous==2.2.0
-Pillow==11.1.0
-numpy==2.0.2
+# Dependances volontairement minimales : sur un Raspberry Pi, chaque paquet
+# sans roue precompilee pour l'architecture se recompile sur place, ce qui
+# prend des heures et echoue souvent faute de memoire.
+#
+# Les bornes sont larges plutot que figees : une version epinglee au patch
+# pres n'a pas forcement de roue pour armv6l, armv7l ET aarch64, alors qu'une
+# fourchette laisse pip retenir celle qui existe sur la machine.
+#
+# uvicorn est installe SANS l'extra [standard] : celui-ci tire uvloop,
+# httptools et watchfiles, dont les deux derniers demandent Rust et n'ont pas
+# de roue pour les Raspberry Pi 32 bits. Ils n'apportent rien ici, ou les
+# requetes sont breves et peu nombreuses.
+
+fastapi>=0.110,<1.0
+uvicorn>=0.27,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9
+itsdangerous>=2.1,<3.0
+Pillow>=10.0,<12.0
