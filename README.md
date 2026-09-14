@@ -296,6 +296,8 @@ petite machine :
 | `PHOTOGRAM_THREADS` | `3` | Threads laissés au pipeline (sur 4 cœurs, en garder un pour le web). |
 | `PHOTOGRAM_KEEP_INTERMEDIATES` | `0` | À `1`, conserve les fichiers de travail — plusieurs Go par job. |
 | `PHOTOGRAM_BACKEND` | `auto` | `openmvg` ou `colmap` pour forcer une chaîne. |
+| `PHOTOGRAM_COLMAP_CUDA` | `auto` | `1`/`0` : COLMAP sait-il densifier ? Détecté en l'interrogeant. |
+| `PHOTOGRAM_COLMAP_GPU` | `auto` | `1`/`0` : GPU pour la détection SIFT. Indépendant du précédent. |
 | `PHOTOGRAM_DATA_DIR` | `/var/lib/photogram` | Photos, base, résultats. À placer sur un disque USB. |
 
 Les originaux sont toujours conservés intacts ; le pipeline ne travaille que
@@ -349,6 +351,7 @@ Premier réflexe : `./scripts/diagnose.sh`.
 | Jobs en attente mais rien ne démarre | `systemctl status photogram-worker` |
 | Profils grisés dans l'interface | Chaîne non installée : voir la page **État du système**. |
 | Un réglage de `.env` reste ignoré | `--diagnostic` affiche les lignes réellement lues. Sous Windows, vérifier qu'aucun `.env.txt` n'a été créé par le Bloc-notes. |
+| « Détection des points caractéristiques » échoue | L'accélération GPU de SIFT. Le pipeline réessaie tout seul sur processeur ; pour l'écarter d'emblée, `PHOTOGRAM_COLMAP_GPU=0`. |
 | Plus de place sur le disque | Vérifier que `PHOTOGRAM_KEEP_INTERMEDIATES` vaut `0`, et supprimer les vieilles reconstructions. |
 
 État complet de la machine et du pipeline : `/health` (aussi disponible en JSON

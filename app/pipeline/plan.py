@@ -94,6 +94,9 @@ class Step:
     func: Optional[Callable] = None      # callable(ctx, log) -> None
     cwd: Optional[Callable] = None       # callable(ctx) -> Path
     optional: bool = False
+    #: callable(ctx, sortie) -> list | None : commande de seconde chance,
+    #: choisie d'apres ce que l'outil a affiche en echouant.
+    repli: Optional[Callable] = None
 
     def resolve_argv(self, ctx: PlanContext) -> List[str]:
         if self.argv is None:

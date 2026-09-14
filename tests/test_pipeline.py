@@ -628,3 +628,107 @@ def test_reglage_prime_sur_la_sonde(tmp_path, monkeypatch):
     assert _colmap_avec_cuda(str(faux)) is False
     monkeypatch.setattr(settings, "colmap_cuda", "1")
     assert _colmap_avec_cuda(str(faux)) is True
+
+
+# --- Repli sur le processeur ---------------------------------------------
+
+
+def test_repli_sur_processeur_quand_le_gpu_se_derobe(
+    client_connecte, photo_jpeg, chaine_colmap_cuda, monkeypatch
+):
+    """Un echec d'acceleration graphique ne doit pas couter la reconstruction."""
+    monkeypatch.setenv("STUB_SIFT_GPU_CASSE", "1")
+
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "Nouvel essai avec des options de repli" in journal
+    assert "--SiftExtraction.use_gpu 0" in journal
+
+
+def test_reglage_gpu_desactive_des_le_depart(tmp_path, monkeypatch):
+    from app.pipeline.colmap import _extraction_argv
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-gpu", ["colmap"]), monkeypatch)
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+
+    assert _valeur_option(_extraction_argv(ctx), "--SiftExtraction.use_gpu") == "1"
+
+    monkeypatch.setattr(settings, "colmap_gpu", "0")
+    assert _valeur_option(_extraction_argv(ctx), "--SiftExtraction.use_gpu") == "0"
+
+
+def test_pas_de_repli_si_deja_sur_processeur(tmp_path, monkeypatch):
+    """Sans GPU au depart, il n'y a rien a retenter : l'echec est reel."""
+    from app.pipeline.colmap import _extraction_argv, _repli_sans_gpu
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-nogpu", ["colmap"]), monkeypatch)
+    monkeypatch.setattr(settings, "colmap_gpu", "0")
+
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+    repli = _repli_sans_gpu(_extraction_argv, "--SiftExtraction.use_gpu")
+    assert repli(ctx, "error: siftgpu not fully supported") is None
+
+
+def test_repli_ignore_une_erreur_sans_rapport(tmp_path, monkeypatch):
+    """Une panne de disque ne doit pas etre confondue avec un souci de GPU."""
+    from app.pipeline.colmap import _extraction_argv, _repli_sans_gpu
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-disque", ["colmap"]), monkeypatch)
+
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+    repli = _repli_sans_gpu(_extraction_argv, "--SiftExtraction.use_gpu")
+    assert repli(ctx, "error: no space left on device") is None
+
+
+# --- Messages d'echec -----------------------------------------------------
+
+
+def test_message_d_echec_porte_la_cause():
+    """« code de sortie 1 » seul n'apprend rien a l'utilisateur."""
+    from app.pipeline.plan import Step
+    from app.pipeline.runner import _message_echec
+
+    message = _message_echec(
+        Step("Detection des points caracteristiques"),
+        1,
+        ["Reading images...", "ERROR: SiftGPU not fully supported."],
+    )
+    assert "code de sortie 1" in message
+    assert "SiftGPU not fully supported" in message
+    # Et le conseil qui va avec.
+    assert "PHOTOGRAM_COLMAP_GPU=0" in message
+
+
+def test_message_d_echec_privilegie_les_lignes_d_erreur():
+    from app.pipeline.plan import Step
+    from app.pipeline.runner import _message_echec
+
+    message = _message_echec(
+        Step("Etape"), 2,
+        ["Processing 1/50", "ERROR: out of memory", "Processing 2/50", "Done reading"],
+    )
+    assert "out of memory" in message
+    assert "Processing 2/50" not in message
+    assert "PHOTOGRAM_WORK_MAX_DIM" in message
+
+
+def test_message_d_echec_sans_ligne_marquante():
+    """Sans ligne d'erreur identifiable, les dernieres lignes restent utiles."""
+    from app.pipeline.plan import Step
+    from app.pipeline.runner import _message_echec
+
+    message = _message_echec(Step("Etape"), 1, ["premiere", "derniere"])
+    assert "derniere" in message

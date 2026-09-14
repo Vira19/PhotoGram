@@ -7,6 +7,7 @@ amont par le worker, qui ne reclame qu'un job a la fois.
 
 from __future__ import annotations
 
+import collections
 import os
 import signal
 import subprocess
@@ -21,6 +22,10 @@ WINDOWS = os.name == "nt"
 #: subprocess n'expose cette constante que sous Windows ; la nommer ici rend
 #: la branche lisible et testable depuis n'importe quel systeme.
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+
+#: Lignes de sortie conservees pour expliquer un echec. Un « code de sortie 1 »
+#: seul n'apprend rien : c'est le message de l'outil qui compte.
+LIGNES_ERREUR = 12
 
 #: Periode de scrutation de la demande d'annulation (secondes).
 CANCEL_POLL_INTERVAL = 2.0
@@ -89,9 +94,15 @@ def run_command(
     ctx: PlanContext,
     log: JobLogger,
     is_cancelled: Callable[[], bool],
-) -> int:
-    """Lance une commande, recopie sa sortie dans le journal, gere l'annulation."""
+) -> tuple:
+    """Lance une commande et renvoie (code de sortie, dernieres lignes).
+
+    La sortie complete part dans le journal ; les dernieres lignes sont
+    conservees a part pour pouvoir expliquer un echec sans obliger a ouvrir le
+    journal.
+    """
     log.write("$ " + " ".join(argv))
+    recentes = collections.deque(maxlen=LIGNES_ERREUR)
 
     process = subprocess.Popen(
         argv,
@@ -112,6 +123,8 @@ def run_command(
         assert process.stdout is not None
         for line in process.stdout:
             log.raw(line)
+            if line.strip():
+                recentes.append(line.rstrip())
             now = time.monotonic()
             if now - last_check >= CANCEL_POLL_INTERVAL:
                 last_check = now
@@ -128,7 +141,7 @@ def run_command(
         if process.stdout:
             process.stdout.close()
 
-    return process.wait()
+    return process.wait(), list(recentes)
 
 
 def _isolation_processus() -> dict:
@@ -207,7 +220,61 @@ def run_step(
         return None
 
     argv = step.resolve_argv(ctx)
-    code = run_command(argv, ctx, log, is_cancelled)
+    code, sortie = run_command(argv, ctx, log, is_cancelled)
+
+    if code != 0 and step.repli is not None:
+        # Certaines etapes ont une seconde chance : typiquement, retomber sur
+        # le processeur quand l'acceleration graphique se derobe. Mieux vaut
+        # une reconstruction lente qu'un echec.
+        alternative = step.repli(ctx, "\n".join(sortie).lower())
+        if alternative:
+            log.write("")
+            log.write("Nouvel essai avec des options de repli.")
+            code, sortie = run_command(
+                [str(part) for part in alternative], ctx, log, is_cancelled
+            )
+
     if code != 0:
-        raise StepFailed(step, f"« {step.name} » a echoue (code de sortie {code}).")
+        raise StepFailed(step, _message_echec(step, code, sortie))
     return code
+
+
+def _message_echec(step: Step, code: int, sortie: List[str]) -> str:
+    """Message d'echec portant l'explication de l'outil, pas seulement son code."""
+    message = f"« {step.name} » a echoue (code de sortie {code})."
+
+    # Les lignes vraiment parlantes sont celles qui annoncent une erreur ; a
+    # defaut, les dernieres emises font l'affaire.
+    marquantes = [
+        ligne for ligne in sortie
+        if any(mot in ligne.lower() for mot in ("error", "erreur", "fail", "fatal", "cannot", "unable"))
+    ]
+    extrait = (marquantes or sortie)[-4:]
+    if extrait:
+        message += " " + " | ".join(extrait)
+
+    for motif, conseil in INDICES:
+        if any(motif in ligne.lower() for ligne in sortie):
+            message += f"  → {conseil}"
+            break
+
+    return message
+
+
+#: Messages d'outils frequents, et ce qu'il faut en faire. Un utilisateur ne
+#: peut pas deviner que « SiftGPU not fully supported » se contourne par un
+#: reglage : autant le lui dire au moment ou il en a besoin.
+INDICES = (
+    ("siftgpu", "L'extraction sur GPU a echoue. Forcez le processeur avec "
+                "PHOTOGRAM_COLMAP_GPU=0 dans .env."),
+    ("no gpu", "Aucun GPU exploitable detecte. Forcez le processeur avec "
+               "PHOTOGRAM_COLMAP_GPU=0 dans .env."),
+    ("opengl", "Le contexte graphique n'a pas pu etre cree. Forcez le "
+               "processeur avec PHOTOGRAM_COLMAP_GPU=0 dans .env."),
+    ("requires cuda", "Cette version de COLMAP est compilee sans CUDA : "
+                      "choisissez le profil « Nuage epars seulement »."),
+    ("out of memory", "Memoire insuffisante : reduisez PHOTOGRAM_WORK_MAX_DIM, "
+                      "le nombre de photos, ou choisissez un profil plus leger."),
+    ("no space left", "Plus de place sur le volume de donnees."),
+    ("not found", "Un fichier attendu est introuvable : voir le journal complet."),
+)

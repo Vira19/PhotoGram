@@ -111,6 +111,9 @@ travail = pathlib.Path(opt("-w", "."))
 if nom == "colmap":
     sous_commande = args[0]
     if sous_commande == "feature_extractor":
+        if os.environ.get("STUB_SIFT_GPU_CASSE") == "1" and opt("--SiftExtraction.use_gpu") == "1":
+            sys.stderr.write("ERROR: SiftGPU not fully supported on this system.\n")
+            sys.exit(1)
         base = pathlib.Path(opt("--database_path"))
         base.parent.mkdir(parents=True, exist_ok=True)
         base.write_text("base")

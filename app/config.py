@@ -96,6 +96,10 @@ class Settings:
     colmap_bin: str = ""
     #: "auto", "1" ou "0" : COLMAP a-t-il ete compile avec CUDA ?
     colmap_cuda: str = "auto"
+    #: "auto", "1" ou "0" : utiliser le GPU pour la detection de points SIFT.
+    #: Independant de CUDA : l'acceleration graphique de SIFT peut se derober
+    #: la ou la densification fonctionne.
+    colmap_gpu: str = "auto"
     sensor_db: str = ""
 
     @classmethod
@@ -118,6 +122,7 @@ class Settings:
             openmvs_bin=_env("PHOTOGRAM_OPENMVS_BIN"),
             colmap_bin=_env("PHOTOGRAM_COLMAP_BIN"),
             colmap_cuda=_env("PHOTOGRAM_COLMAP_CUDA", "auto") or "auto",
+            colmap_gpu=_env("PHOTOGRAM_COLMAP_GPU", "auto") or "auto",
             sensor_db=_env("PHOTOGRAM_SENSOR_DB"),
         )
 

@@ -42,13 +42,46 @@ def _taille_max(ctx: PlanContext) -> int:
     return ctx.preset.densify_max_resolution or -1
 
 
+#: Ce que COLMAP affiche quand l'acceleration graphique de SIFT se derobe.
+MOTIFS_GPU = ("gpu", "opengl", "siftgpu", "glew", "display")
+
+
 def _gpu(ctx: PlanContext) -> str:
-    """1 si COLMAP peut utiliser le GPU pour SIFT, 0 sinon.
+    """1 si COLMAP doit utiliser le GPU pour SIFT, 0 sinon.
 
     L'extraction et l'appariement sur GPU sont d'un ordre de grandeur plus
-    rapides ; la version sans CUDA doit s'en passer.
+    rapides, mais cette acceleration depend d'un contexte graphique qui n'est
+    pas toujours disponible : PHOTOGRAM_COLMAP_GPU permet de l'ecarter sans
+    renoncer a la densification, qui n'a rien a voir.
     """
+    from ..config import settings
+
+    reglage = settings.colmap_gpu.lower()
+    if reglage in ("1", "true", "oui", "on"):
+        return "1"
+    if reglage in ("0", "false", "non", "off"):
+        return "0"
     return "1" if ctx.tools.colmap_dense else "0"
+
+
+def _repli_sans_gpu(construire, drapeau: str):
+    """Rejoue la meme etape sur processeur si le GPU s'est derobe.
+
+    Un echec d'acceleration graphique est frequent et sans rapport avec les
+    donnees : perdre une reconstruction pour cela serait absurde, alors que la
+    meme etape aboutit sur processeur, seulement plus lentement.
+    """
+
+    def repli(ctx: PlanContext, sortie: str):
+        if _gpu(ctx) != "1":
+            return None  # deja sur processeur, rien a tenter
+        if not any(motif in sortie for motif in MOTIFS_GPU):
+            return None
+        argv = [str(part) for part in construire(ctx)]
+        argv[argv.index(drapeau) + 1] = "0"
+        return argv
+
+    return repli
 
 
 def _extraction_argv(ctx: PlanContext) -> list:
@@ -185,8 +218,10 @@ def _maillage_argv(ctx: PlanContext) -> list:
 def build_colmap_plan(ctx: PlanContext) -> List[Step]:
     etapes = [
         Step("Preparation des images", func=prepare_images),
-        Step("Detection des points caracteristiques", argv=_extraction_argv),
-        Step("Mise en correspondance", argv=_appariement_argv),
+        Step("Detection des points caracteristiques", argv=_extraction_argv,
+             repli=_repli_sans_gpu(_extraction_argv, "--SiftExtraction.use_gpu")),
+        Step("Mise en correspondance", argv=_appariement_argv,
+             repli=_repli_sans_gpu(_appariement_argv, "--SiftMatching.use_gpu")),
         Step("Positionnement des cameras (SfM)", argv=_mapper_argv),
         Step("Controle de la reconstruction", func=_choisir_modele),
         Step("Export du nuage colore", argv=_export_argv),
