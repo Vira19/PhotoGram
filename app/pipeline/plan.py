@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from . import ply
 from .binaries import MVG_LEGACY_SFM, Toolchain
 from .presets import Preset
 
@@ -174,10 +175,31 @@ def collect_artifacts(ctx: PlanContext, log: Callable[[str], None]) -> None:
         shutil.copy2(source, target)
         found += 1
 
-    existing = sorted(p.name for p in ctx.out_dir.glob("*") if p.is_file())
+    existing = sorted(p for p in ctx.out_dir.glob("*") if p.is_file())
     if not existing:
         raise RuntimeError("Le pipeline s'est termine sans produire aucun fichier.")
-    log(f"{found} fichiers rapatries. Resultats disponibles : {', '.join(existing)}")
+
+    log(f"{found} fichiers rapatries. Resultats :")
+    vides = []
+    for chemin in existing:
+        detail = f"{chemin.stat().st_size // 1024} Kio"
+        if chemin.suffix.lower() == ".ply":
+            # Une commande peut reussir et n'ecrire qu'un en-tete : le dire
+            # ici evite de le decouvrir en ouvrant la visionneuse.
+            detail += f", {ply.resume(chemin)}"
+            if ply.est_vide(chemin):
+                vides.append(chemin.name)
+                detail += "   ← VIDE"
+        log(f"  {chemin.name} : {detail}")
+
+    if vides:
+        log("")
+        log(
+            "ATTENTION : " + ", ".join(vides) + " ne contien" + ("nent" if len(vides) > 1 else "t")
+            + " aucun point. La reconstruction a abouti mais n'a rien trouve a "
+            "reconstruire : recouvrement insuffisant entre les photos, sujet sans "
+            "texture, ou photos floues."
+        )
 
 
 # --------------------------------------------------------------------------

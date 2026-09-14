@@ -321,6 +321,30 @@ def _choisir_modele(ctx: PlanContext, log: Callable[[str], None]) -> None:
 # --------------------------------------------------------------------------
 
 
+def _verifier_nuage(ctx: PlanContext, log: Callable[[str], None]) -> None:
+    """Refuse de continuer sur un nuage epars vide.
+
+    Les etapes denses acceptent sans broncher un nuage sans point et rendent
+    des fichiers vides apres des heures de calcul : mieux vaut s'arreter ici,
+    ou la cause est encore identifiable.
+    """
+    from . import ply
+
+    nuage = ctx.out_dir / "nuage_epars.ply"
+    if not nuage.is_file():
+        raise RuntimeError("L'export du nuage epars n'a produit aucun fichier.")
+
+    if ply.est_vide(nuage):
+        raise RuntimeError(
+            "Le nuage epars ne contient aucun point. Les cameras ont ete "
+            "positionnees mais aucune structure n'a ete reconstruite : "
+            "recouvrement insuffisant entre les photos (visez 60-80 %), sujet "
+            "sans texture, ou photos floues."
+        )
+
+    log(f"Nuage epars : {ply.resume(nuage)}.")
+
+
 def _repli_sans_gpu(construire, alias: Sequence[str]):
     """Rejoue la meme etape sur processeur si le GPU s'est derobe.
 
@@ -361,6 +385,7 @@ def build_colmap_plan(ctx: PlanContext) -> List[Step]:
         Step("Positionnement des cameras (SfM)", argv=_mapper_argv),
         Step("Controle de la reconstruction", func=_choisir_modele),
         Step("Export du nuage colore", argv=_export_argv),
+        Step("Controle du nuage epars", func=_verifier_nuage),
         Step("Export du modele en texte", argv=_rapport_argv, optional=True),
     ]
 

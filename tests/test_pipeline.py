@@ -890,3 +890,42 @@ def test_fichier_de_sortie_cree_son_dossier_parent(tmp_path, monkeypatch):
 
     assert cible.parent.is_dir()
     assert not cible.exists()  # seul le dossier est prepare
+
+
+# --- Resultats vides ------------------------------------------------------
+
+
+def test_nuage_vide_arrete_le_job(client_connecte, photo_jpeg, chaine_colmap_cuda, monkeypatch):
+    """Densifier un nuage sans point coute des heures pour rien."""
+    monkeypatch.setenv("STUB_PLY_VIDE", "1")
+
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="balanced")
+    job_id = mettre_en_file(project_id, "balanced")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "failed"
+    assert "aucun point" in resultat["error"]
+    assert "recouvrement" in resultat["error"]
+
+    # L'arret doit survenir avant les etapes denses.
+    etapes = db.fetch_all(
+        "SELECT name, status FROM job_steps WHERE job_id = ? ORDER BY position", (job_id,)
+    )
+    denses = [e for e in etapes if "profondeur" in e["name"]]
+    assert denses and denses[0]["status"] == "pending"
+
+
+def test_journal_detaille_le_contenu_des_resultats(
+    client_connecte, photo_jpeg, chaine_colmap_cuda
+):
+    """Le journal doit dire ce que contient chaque fichier, pas seulement son nom."""
+    project_id = preparer_projet(client_connecte, photo_jpeg)
+    job_id = mettre_en_file(project_id, "sparse")
+
+    worker.process_job(worker.claim_job())
+
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "nuage_epars.ply" in journal
+    assert "sommets" in journal

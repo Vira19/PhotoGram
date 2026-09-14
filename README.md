@@ -360,6 +360,7 @@ Premier réflexe : `./scripts/diagnose.sh`.
 | « Détection des points caractéristiques » échoue | Souvent l'accélération GPU de SIFT. Le pipeline réessaie tout seul sur processeur ; pour l'écarter d'emblée, `PHOTOGRAM_COLMAP_GPU=0`. |
 | `unrecognised option '--Xxx'` | Les noms d'options de COLMAP changent selon les versions ; PhotoGram les découvre via `--help`. Si le message persiste, la sous-commande concernée est à signaler. |
 | `output_path is not a directory` | Un dossier de sortie manquant. Corrigé : les commandes déclarent désormais si leur sortie est un fichier ou un dossier, et le créent. |
+| La visionneuse dit « 0 sommet » | La reconstruction a abouti sans rien trouver à reconstruire. Le journal du job détaille le contenu de chaque fichier ; revoir le recouvrement et la netteté des photos. |
 | Plus de place sur le disque | Vérifier que `PHOTOGRAM_KEEP_INTERMEDIATES` vaut `0`, et supprimer les vieilles reconstructions. |
 
 État complet de la machine et du pipeline : `/health` (aussi disponible en JSON
@@ -381,6 +382,7 @@ app/
     presets.py       profils de qualité
     plan.py          plan OpenMVG + OpenMVS
     colmap.py        plan COLMAP (épars, et dense via CUDA), options découvertes
+    ply.py           lecture d'en-tête PLY : contrôle des résultats produits
     runner.py        exécution, journalisation, annulation
   routes/            authentification, projets et photos, reconstructions
   templates/         gabarits Jinja2

@@ -210,3 +210,65 @@ def test_memoire_incomplete_affichee_comme_inconnue(client_connecte, monkeypatch
 
     sante = client_connecte.get("/health")
     assert "—" in sante.text
+
+
+def test_visionneuse_ecarte_les_fichiers_vides(client_connecte, projet_reconstruit):
+    """Ouvrir un fichier vide par defaut ferait croire a une visionneuse cassee."""
+    from app.config import settings
+    from app.routes.jobs import _visionnables
+
+    project_id, job_id = projet_reconstruit
+    out_dir = settings.job_dir(project_id, job_id) / "out"
+
+    entete_vide = (
+        "ply\nformat ascii 1.0\nelement vertex 0\n"
+        "property float x\nproperty float y\nproperty float z\nend_header\n"
+    )
+    (out_dir / "maillage.ply").write_text(entete_vide)
+    (out_dir / "nuage_dense.ply").write_text(
+        "ply\nformat ascii 1.0\nelement vertex 2\n"
+        "property float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 1 1\n"
+    )
+    from app import db
+
+    for nom in ("maillage.ply", "nuage_dense.ply"):
+        db.execute(
+            "INSERT OR REPLACE INTO artifacts (job_id, kind, filename, bytes, created_at) "
+            "VALUES (?, 'nuage', ?, ?, ?)",
+            (job_id, nom, (out_dir / nom).stat().st_size, db.now()),
+        )
+
+    job = db.fetch_one(
+        "SELECT j.*, p.name AS project_name FROM jobs j JOIN projects p ON p.id = j.project_id "
+        "WHERE j.id = ?", (job_id,)
+    )
+    artifacts = db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))
+    classes = _visionnables(dict(job), artifacts)
+
+    # Le maillage vide passe derriere, malgre sa position dans l'ordre de preference.
+    assert classes[0]["filename"] != "maillage.ply"
+    assert classes[0]["vide"] is False
+    assert classes[-1]["filename"] == "maillage.ply"
+    assert classes[-1]["vide"] is True
+
+    page = client_connecte.get(f"/jobs/{job_id}/visionneuse")
+    assert "(vide)" in page.text
+
+
+def test_visionneuse_previent_sur_un_fichier_vide(client_connecte, projet_reconstruit):
+    from app.config import settings
+    from app import db
+
+    project_id, job_id = projet_reconstruit
+    out_dir = settings.job_dir(project_id, job_id) / "out"
+    (out_dir / "vide.ply").write_text(
+        "ply\nformat ascii 1.0\nelement vertex 0\n"
+        "property float x\nproperty float y\nproperty float z\nend_header\n"
+    )
+    db.execute(
+        "INSERT INTO artifacts (job_id, kind, filename, bytes, created_at) VALUES (?, 'nuage', ?, ?, ?)",
+        (job_id, "vide.ply", (out_dir / "vide.ply").stat().st_size, db.now()),
+    )
+
+    page = client_connecte.get(f"/jobs/{job_id}/visionneuse", params={"fichier": "vide.ply"})
+    assert "ne contient aucun point" in page.text

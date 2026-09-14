@@ -122,6 +122,14 @@
     if (!elementSommets) throw new Error("Ce PLY ne contient aucun sommet.");
 
     var nombre = elementSommets.nombre;
+    if (!nombre) {
+      // Une commande peut reussir et n'ecrire qu'un en-tete. Le dire
+      // explicitement evite de chercher la panne du cote de l'affichage.
+      throw new Error(
+        "Ce fichier declare 0 sommet : la reconstruction s'est terminee sans rien " +
+        "trouver a reconstruire. Voyez le journal du job."
+      );
+    }
     var positions = new Float32Array(nombre * 3);
     var couleurs = new Float32Array(nombre * 3);
     var aDesCouleurs = elementSommets.proprietes.some(function (p) { return p.nom === "red"; });
@@ -519,7 +527,12 @@
         .then(function (donnees) {
           statut("Analyse du fichier…");
           var geometrie = extension === "obj" ? lireObj(donnees) : lirePly(donnees);
-          if (!geometrie.positions.length) throw new Error("Le fichier ne contient aucune geometrie.");
+          if (!geometrie.positions.length) {
+            var taille = donnees.byteLength !== undefined ? donnees.byteLength : donnees.length;
+            throw new Error(
+              "Le fichier ne contient aucune geometrie exploitable (" + taille + " octets lus)."
+            );
+          }
           demarrer(canvas, geometrie, statut);
         })
         .catch(function (erreur) {

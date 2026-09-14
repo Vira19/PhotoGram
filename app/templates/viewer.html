@@ -9,12 +9,23 @@
     <div class="barre-actions" style="margin-bottom:12px">
       {% for artifact in visionnables %}
         <a class="bouton {{ '' if artifact.filename == choisi else 'secondaire' }}"
-           href="/jobs/{{ job.id }}/visionneuse?fichier={{ artifact.filename }}">
-          {{ artifact.filename }} <span style="opacity:.7; font-weight:400">({{ artifact.bytes | bytes }})</span>
+           href="/jobs/{{ job.id }}/visionneuse?fichier={{ artifact.filename }}"
+           {% if artifact.vide %}title="Ce fichier ne contient aucun point."{% endif %}>
+          {{ artifact.filename }}
+          <span style="opacity:.7; font-weight:400">
+            {%- if artifact.vide %}(vide){% else %}({{ artifact.bytes | bytes }}){% endif -%}
+          </span>
         </a>
       {% endfor %}
     </div>
 
+    {% if choisi_vide %}
+      <div class="message alerte">
+        <strong>{{ choisi }} ne contient aucun point.</strong>
+        La reconstruction s'est terminée sans rien trouver à reconstruire.
+        Le journal du job en donne la cause probable.
+      </div>
+    {% endif %}
     <canvas id="scene"></canvas>
     <p class="discret" id="statut" style="margin:10px 0 0">Initialisation…</p>
     <p class="aide" style="margin-top:6px">

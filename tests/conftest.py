@@ -201,11 +201,18 @@ if nom == "colmap":
         cible = pathlib.Path(opt("--output_path"))
         if opt("--output_type") == "PLY":
             cible.parent.mkdir(parents=True, exist_ok=True)
-            cible.write_text(
-                "ply\nformat ascii 1.0\nelement vertex 1\n"
-                "property float x\nproperty float y\nproperty float z\n"
-                "end_header\n0 0 0\n"
-            )
+            if os.environ.get("STUB_PLY_VIDE") == "1":
+                cible.write_text(
+                    "ply\nformat ascii 1.0\nelement vertex 0\n"
+                    "property float x\nproperty float y\nproperty float z\n"
+                    "end_header\n"
+                )
+            else:
+                cible.write_text(
+                    "ply\nformat ascii 1.0\nelement vertex 1\n"
+                    "property float x\nproperty float y\nproperty float z\n"
+                    "end_header\n0 0 0\n"
+                )
         else:
             cible.mkdir(parents=True, exist_ok=True)
             (cible / "cameras.txt").write_text("# cameras\n")

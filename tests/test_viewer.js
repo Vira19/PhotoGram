@@ -68,4 +68,14 @@ verifier('couleur neutre fournie', g.couleurs.length, 12);
 g = lireObj('v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nf 1 2 4 3\n');
 verifier('quadrilatere triangule', Array.from(g.indices), [0,1,3, 0,3,2]);
 
+console.log('PLY sans sommet :');
+const entete0 = 'ply\nformat ascii 1.0\nelement vertex 0\nproperty float x\nproperty float y\nproperty float z\nend_header\n';
+let message = '';
+try {
+  lirePly(new TextEncoder().encode(entete0).buffer);
+} catch (e) {
+  message = e.message;
+}
+verifier('message explicite plutot que geometrie vide', message.includes('0 sommet'), true);
+
 process.exit(echecs ? 1 : 0);

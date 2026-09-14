@@ -22,6 +22,40 @@ LOG_TAIL_BYTES = 40_000
 
 VIEWABLE_SUFFIXES = {".ply", ".obj"}
 
+#: Ordre de preference a l'ouverture : du plus parlant au plus brut.
+PREFERENCE_VISIONNEUSE = ("maillage", "nuage_dense", "nuage_epars")
+
+
+def _visionnables(job: dict, artifacts) -> list:
+    """Resultats affichables, les plus parlants d'abord, les vides en dernier.
+
+    Ouvrir par defaut un maillage vide donnerait l'impression que la
+    visionneuse est cassee alors que le nuage, lui, est bien la.
+    """
+    from ..pipeline import ply
+
+    out_dir = settings.job_dir(job["project_id"], job["id"]) / "out"
+    retenus = []
+    for artifact in artifacts:
+        chemin = Path(artifact["filename"])
+        if chemin.suffix.lower() not in VIEWABLE_SUFFIXES:
+            continue
+        fichier = out_dir / artifact["filename"]
+        vide = chemin.suffix.lower() == ".ply" and ply.est_vide(fichier)
+        rang = next(
+            (index for index, nom in enumerate(PREFERENCE_VISIONNEUSE) if chemin.stem == nom),
+            len(PREFERENCE_VISIONNEUSE),
+        )
+        retenus.append({
+            "filename": artifact["filename"],
+            "bytes": artifact["bytes"],
+            "vide": vide,
+            "_tri": (vide, rang, artifact["filename"]),
+        })
+
+    retenus.sort(key=lambda element: element["_tri"])
+    return retenus
+
 
 def get_job(job_id: int) -> dict:
     row = db.fetch_one(
@@ -90,7 +124,7 @@ def _job_context(request: Request, job_id: int) -> dict:
         "artifacts": artifacts,
         "preset": get_preset(job["preset"]),
         "en_cours": job["status"] in ("queued", "running"),
-        "visionnables": [a for a in artifacts if Path(a["filename"]).suffix.lower() in VIEWABLE_SUFFIXES],
+        "visionnables": _visionnables(job, artifacts),
     }
 
 
@@ -193,7 +227,7 @@ async def viewer(request: Request, job_id: int, fichier: Optional[str] = None):
     artifacts = db.fetch_all(
         "SELECT * FROM artifacts WHERE job_id = ? ORDER BY filename", (job_id,)
     )
-    visionnables = [a for a in artifacts if Path(a["filename"]).suffix.lower() in VIEWABLE_SUFFIXES]
+    visionnables = _visionnables(job, artifacts)
     if not visionnables:
         raise HTTPException(status_code=404, detail="Aucun modele visualisable pour cette reconstruction")
 
@@ -208,6 +242,9 @@ async def viewer(request: Request, job_id: int, fichier: Optional[str] = None):
             "job": job,
             "visionnables": visionnables,
             "choisi": choisi,
+            "choisi_vide": next(
+                (a["vide"] for a in visionnables if a["filename"] == choisi), False
+            ),
             "extension": Path(choisi).suffix.lower().lstrip("."),
         },
     )
