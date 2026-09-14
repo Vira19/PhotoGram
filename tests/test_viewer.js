@@ -78,4 +78,32 @@ try {
 }
 verifier('message explicite plutot que geometrie vide', message.includes('0 sommet'), true);
 
+console.log('Taille des points :');
+const { taillePointCible, taillePointMonde, facteurProjection } = window.PhotoGramViewer;
+
+// Un nuage epars doit donner des points franchement visibles ; le bug d'origine
+// les rendait plus petits qu'un pixel, donc invisibles a l'ecran.
+verifier('nuage epars : points bien visibles', taillePointCible(2239) >= 6, true);
+verifier('nuage dense : points discrets', taillePointCible(5e6) <= 3, true);
+verifier('jamais sous 2 px', taillePointCible(1e9) >= 2, true);
+verifier('jamais au-dessus de 9 px', taillePointCible(1) <= 9, true);
+
+// La taille monde doit redonner exactement la cible au cadrage initial.
+const rayon = 55.6, distance = rayon * 3, hauteur = 1000, ratio = 2;
+const monde = taillePointMonde(2239, distance, hauteur, ratio);
+const pixels = monde * facteurProjection(hauteur) / distance / ratio;
+verifier('la cible est atteinte au cadrage initial',
+  Math.abs(pixels - taillePointCible(2239)) < 0.01, true);
+
+// En se rapprochant, les points doivent grossir (perspective).
+const proche = monde * facteurProjection(hauteur) / (distance / 2) / ratio;
+verifier('les points grossissent en se rapprochant', proche > pixels * 1.9, true);
+
+// La taille monde est figee au premier rendu. Si le canvas grandit ensuite,
+// les points grandissent dans la meme proportion que le reste de l'image :
+// un point garde la meme taille relative au modele, ce qui est le but.
+const pixelsGrandCanvas = monde * facteurProjection(2000) / distance / ratio;
+verifier("les points suivent l'echelle de l'image",
+  Math.abs(pixelsGrandCanvas - pixels * 2) < 0.01, true);
+
 process.exit(echecs ? 1 : 0);

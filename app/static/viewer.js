@@ -277,6 +277,10 @@
 
   // ----------------------------------------------------------------- shaders
 
+  // « taille » vaut la taille du point en unites monde multipliee par le
+  // facteur de projection ; la diviser par la profondeur donne directement des
+  // pixels. Un facteur arbitraire rendait les points d'un nuage epars plus
+  // petits qu'un pixel, donc invisibles.
   var VS_POINTS = [
     "attribute vec3 position; attribute vec3 couleur;",
     "uniform mat4 projection; uniform mat4 vue; uniform float taille;",
@@ -285,7 +289,7 @@
     "  vCouleur = couleur;",
     "  vec4 pos = vue * vec4(position, 1.0);",
     "  gl_Position = projection * pos;",
-    "  gl_PointSize = max(1.0, taille / max(0.001, -pos.z));",
+    "  gl_PointSize = clamp(taille / max(0.001, -pos.z), 1.0, 64.0);",
     "}",
   ].join("\n");
 
@@ -341,6 +345,30 @@
   }
 
   // ------------------------------------------------------------------- scene
+
+  var FOV = Math.PI / 4;
+
+  /** Taille visee d'un point, en pixels CSS.
+   *
+   * Un nuage epars de quelques milliers de points doit rester franchement
+   * visible ; un nuage dense de plusieurs millions ne doit pas se transformer
+   * en bouillie. La racine cubique du nombre de points approche la densite
+   * lineaire et donne une progression douce entre les deux.
+   */
+  function taillePointCible(nombrePoints) {
+    return Math.min(9, Math.max(2, 250 / Math.cbrt(Math.max(1, nombrePoints))));
+  }
+
+  /** Facteur liant une longueur monde a des pixels : longueur * facteur / profondeur. */
+  function facteurProjection(hauteurPixels) {
+    return hauteurPixels / (2 * Math.tan(FOV / 2));
+  }
+
+  /** Taille d'un point en unites monde, pour qu'il occupe la cible au cadrage initial. */
+  function taillePointMonde(nombrePoints, distanceInitiale, hauteurPixels, ratioPixels) {
+    var ciblePixels = taillePointCible(nombrePoints) * ratioPixels;
+    return ciblePixels * distanceInitiale / facteurProjection(hauteurPixels);
+  }
 
   function demarrer(canvas, geometrie, statut) {
     var gl = canvas.getContext("webgl", { antialias: true, alpha: false });
@@ -406,13 +434,18 @@
     gl.enable(gl.DEPTH_TEST);
     gl.clearColor(0.059, 0.075, 0.098, 1.0);
 
-    var camera = { theta: Math.PI / 4, phi: Math.PI / 3, distance: rayon * 3, cible: [0, 0, 0] };
+    var distanceInitiale = rayon * 3;
+    var camera = { theta: Math.PI / 4, phi: Math.PI / 3, distance: distanceInitiale, cible: [0, 0, 0] };
+    // Calculee au premier rendu, quand la taille reelle du canvas est connue,
+    // puis figee : c'est une dimension du modele, pas de l'affichage.
+    var tailleMonde = null;
     var uProjection = gl.getUniformLocation(prog, "projection");
     var uVue = gl.getUniformLocation(prog, "vue");
     var uTaille = gl.getUniformLocation(prog, "taille");
 
+    var ratio = Math.min(window.devicePixelRatio || 1, 2);
+
     function dessiner() {
-      var ratio = Math.min(window.devicePixelRatio || 1, 2);
       var largeur = Math.floor(canvas.clientWidth * ratio);
       var hauteur = Math.floor(canvas.clientHeight * ratio);
       if (canvas.width !== largeur || canvas.height !== hauteur) {
@@ -428,9 +461,16 @@
         camera.cible[2] + camera.distance * sinPhi * Math.sin(camera.theta),
       ];
       gl.uniformMatrix4fv(uProjection, false,
-        perspective(Math.PI / 4, canvas.width / canvas.height, rayon / 100, rayon * 40));
+        perspective(FOV, canvas.width / canvas.height, rayon / 100, rayon * 40));
       gl.uniformMatrix4fv(uVue, false, regarder(oeil, camera.cible, [0, 1, 0]));
-      if (uTaille) gl.uniform1f(uTaille, rayon * 2.2);
+      if (uTaille) {
+        if (tailleMonde === null) {
+          tailleMonde = taillePointMonde(
+            positions.length / 3, distanceInitiale, canvas.height, ratio
+          );
+        }
+        gl.uniform1f(uTaille, tailleMonde * facteurProjection(canvas.height));
+      }
 
       if (aDesFaces) gl.drawElements(gl.TRIANGLES, nombreIndices, typeIndices, 0);
       else gl.drawArrays(gl.POINTS, 0, positions.length / 3);
@@ -514,6 +554,9 @@
     // contexte WebGL, et leur arithmetique d'offsets merite d'etre testee.
     lirePly: lirePly,
     lireObj: lireObj,
+    taillePointCible: taillePointCible,
+    taillePointMonde: taillePointMonde,
+    facteurProjection: facteurProjection,
 
     charger: function (canvas, url, extension, elementStatut) {
       function statut(message) { if (elementStatut) elementStatut.textContent = message; }
