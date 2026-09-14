@@ -67,6 +67,7 @@ class Settings:
     # Binaires
     openmvg_bin: str = ""
     openmvs_bin: str = ""
+    colmap_bin: str = ""
     sensor_db: str = ""
 
     @classmethod
@@ -87,6 +88,7 @@ class Settings:
             backend=_env("PHOTOGRAM_BACKEND", "auto").lower() or "auto",
             openmvg_bin=_env("PHOTOGRAM_OPENMVG_BIN"),
             openmvs_bin=_env("PHOTOGRAM_OPENMVS_BIN"),
+            colmap_bin=_env("PHOTOGRAM_COLMAP_BIN"),
             sensor_db=_env("PHOTOGRAM_SENSOR_DB"),
         )
 

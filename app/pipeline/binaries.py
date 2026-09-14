@@ -62,7 +62,7 @@ MVS_PREFIXES = ["", "OpenMVS_", "openMVS_"]
 
 def _search_dirs() -> List[Path]:
     dirs = []
-    for raw in (settings.openmvg_bin, settings.openmvs_bin):
+    for raw in (settings.openmvg_bin, settings.openmvs_bin, settings.colmap_bin):
         if raw:
             dirs.append(Path(raw))
     dirs.extend(Path(d) for d in EXTRA_DIRS)

@@ -24,6 +24,9 @@ Ce que ça donne concrètement, pour ~20 photos :
 | **Équilibré** | Maillage texturé correct | hors de portée | 30 à 60 min |
 | **Qualité maximale** | Maillage raffiné pleine résolution | hors de portée | 2 à 6 h |
 
+Sur un ordinateur de bureau, les quatre profils sont accessibles ; les durées
+de la dernière colonne donnent l'ordre de grandeur.
+
 Le profil **« Nuage épars seulement »** est le mode par défaut, et le seul
 vraiment confortable sur RPi3. Il suffit largement pour vérifier qu'une série
 de photos « tient » avant de la rejouer en qualité sur une vraie machine — ce
@@ -75,6 +78,64 @@ La chaîne est choisie automatiquement : OpenMVG dès qu'il est complet pour le
 profil demandé, COLMAP sinon. `PHOTOGRAM_BACKEND` permet de forcer l'un ou
 l'autre. La page **État du système** affiche ce qui est réellement installé, et
 l'interface grise les profils que la machine ne sait pas honorer.
+
+## Déployer sur son propre ordinateur
+
+C'est le chemin le plus court, et il ne demande ni droits administrateur, ni
+systemd, ni installation système : le dépôt se suffit à lui-même.
+
+```bash
+git clone https://github.com/vira19/PhotoGram.git
+cd PhotoGram
+
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt      # Windows : .venv\Scripts\pip
+.venv/bin/python -m app.run                    # Windows : .venv\Scripts\python
+```
+
+Au premier lancement, `app.run` crée un `.env`, **génère un mot de passe et
+l'affiche**, puis démarre l'interface web et le worker ensemble. Ctrl+C arrête
+les deux. Les données vont dans `./data`.
+
+Les réglages initiaux sont déduits de la machine : sur un ordinateur de bureau,
+les photos ne sont plus bridées à 1600 px ni le lot à 40 images comme sur un
+Pi. Tout reste modifiable dans `.env`.
+
+Quelques options :
+
+```bash
+python -m app.run --port 8080     # autre port
+python -m app.run --sans-worker   # interface seule
+python -m app.run --dev           # rechargement auto du code
+```
+
+### Installer la chaîne de reconstruction
+
+COLMAP suffit pour le nuage épars et s'installe partout :
+
+| Système | Commande |
+|---|---|
+| Debian / Ubuntu / Raspberry Pi OS | `sudo apt install colmap` |
+| Fedora | `sudo dnf install colmap` |
+| Arch | `sudo pacman -S colmap` |
+| macOS | `brew install colmap` |
+| Windows | [Binaires officiels](https://github.com/colmap/colmap/releases) (`...-windows-no-cuda.zip`), à décompresser |
+
+Pour aller jusqu'au maillage texturé, il faut OpenMVG + OpenMVS. Sous Linux,
+`sudo ./scripts/install_pipeline.sh --openmvg` les compile. Sous Windows, les
+deux projets publient des binaires précompilés dans leurs *releases* GitHub.
+
+Si les exécutables ne sont pas dans le `PATH`, indiquer leur dossier dans
+`.env` — `PHOTOGRAM_COLMAP_BIN`, `PHOTOGRAM_OPENMVG_BIN`,
+`PHOTOGRAM_OPENMVS_BIN`. La page **État du système** confirme ce qui est
+détecté.
+
+### En faire un service permanent
+
+`python -m app.run` s'arrête avec le terminal. Pour qu'il tourne en permanence
+et redémarre tout seul, utiliser les unités systemd via
+`sudo ./scripts/install.sh` (Linux uniquement) — c'est ce que décrit la section
+suivante.
 
 ## Installation sur Raspberry Pi
 
@@ -218,6 +279,7 @@ avec l'en-tête `Accept: application/json`).
 
 ```
 app/
+  run.py             lancement local : web + worker en une commande
   main.py            application FastAPI, middleware d'authentification
   worker.py          boucle de traitement de la file
   config.py          configuration issue de l'environnement

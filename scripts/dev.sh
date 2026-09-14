@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Lancement en developpement : web et worker dans le meme terminal.
+# Developpement : prepare l'environnement puis lance PhotoGram avec
+# rechargement automatique du code.
 #
 #   ./scripts/dev.sh
 #
-# Le serveur recharge automatiquement le code ; le worker, non : relancez-le
-# a la main apres avoir touche au pipeline.
+# Pour un usage normal sur sa machine, « python -m app.run » suffit : ce script
+# n'ajoute que la creation du venv de developpement et l'option --dev.
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -16,18 +17,4 @@ if [[ ! -d .venv ]]; then
   .venv/bin/pip install --quiet -r requirements-dev.txt
 fi
 
-if [[ ! -f .env ]]; then
-  echo "==> Creation d'un .env de developpement"
-  cp .env.example .env
-  sed -i "s|^PHOTOGRAM_PASSWORD=.*|PHOTOGRAM_PASSWORD=photogram|" .env
-  sed -i "s|^PHOTOGRAM_SECRET_KEY=.*|PHOTOGRAM_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')|" .env
-  sed -i "s|^PHOTOGRAM_DATA_DIR=.*|PHOTOGRAM_DATA_DIR=$(pwd)/data|" .env
-  echo "    Mot de passe : photogram"
-fi
-
-# Le worker est arrete en meme temps que le serveur.
-.venv/bin/python -m app.worker &
-PID_WORKER=$!
-trap 'kill $PID_WORKER 2>/dev/null || true' EXIT
-
-.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+exec .venv/bin/python -m app.run --dev "$@"

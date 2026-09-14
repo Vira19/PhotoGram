@@ -15,6 +15,7 @@ Lancement :  python -m app.worker
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import signal
 import sys
@@ -31,6 +32,10 @@ from .pipeline.runner import Cancelled, JobLogger, StepFailed, run_step
 
 POLL_INTERVAL = 5.0
 
+#: PID du lanceur, quand le worker est demarre par « python -m app.run ».
+#: Sur un service systemd la variable est absente et le controle est inactif.
+_PARENT_PID = int(os.environ.get("PHOTOGRAM_PARENT_PID", "0") or 0)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [worker] %(message)s",
@@ -42,8 +47,27 @@ _stop_requested = False
 
 def _handle_signal(signum, _frame):
     global _stop_requested
-    log.info("Signal %s recu : arret apres l'etape en cours.", signum)
+    log.info("Signal %s recu : arret du worker.", signum)
     _stop_requested = True
+
+
+def _arret_demande() -> bool:
+    """Le worker doit-il s'arreter : signal recu, ou lanceur disparu ?
+
+    Le second cas couvre la fermeture du terminal sous « python -m app.run » :
+    sans ce controle, le worker survivrait en orphelin, garderait la base
+    ouverte et continuerait a consommer la machine sans que rien ne l'affiche.
+    Sur les systemes POSIX, un processus orphelin est reattache a init, donc
+    son PPID cesse de correspondre a celui du lanceur.
+    """
+    global _stop_requested
+    if _stop_requested:
+        return True
+    if _PARENT_PID and hasattr(os, "getppid") and os.getppid() != _PARENT_PID:
+        log.info("Lanceur disparu : arret du worker.")
+        _stop_requested = True
+        return True
+    return False
 
 
 def claim_job() -> Optional[dict]:
@@ -243,7 +267,7 @@ def process_job(job: dict) -> None:
         register_steps(job_id, steps)
 
         for position, step in enumerate(steps):
-            if is_cancelled(job_id):
+            if is_cancelled(job_id) or _arret_demande():
                 raise Cancelled()
 
             db.execute(
@@ -255,7 +279,10 @@ def process_job(job: dict) -> None:
 
             started = time.monotonic()
             try:
-                code = run_step(step, ctx, logger, lambda: is_cancelled(job_id))
+                code = run_step(
+                    step, ctx, logger,
+                    lambda: is_cancelled(job_id) or _arret_demande(),
+                )
             except Cancelled:
                 mark_step(job_id, position, "cancelled", finished_at=db.now())
                 raise
@@ -289,9 +316,17 @@ def process_job(job: dict) -> None:
         logger.rule("Reconstruction terminee avec succes.")
 
     except Cancelled:
-        logger.rule("Reconstruction annulee a la demande de l'utilisateur.")
-        record_artifacts(job_id, ctx.out_dir)
-        finish_job(job_id, "cancelled", "Annule par l'utilisateur.")
+        if _stop_requested and not is_cancelled(job_id):
+            logger.rule("Worker arrete : la reconstruction est remise en file.")
+            db.execute(
+                "UPDATE jobs SET status = 'queued', started_at = NULL, step_index = 0, "
+                "current_step = '' WHERE id = ?",
+                (job_id,),
+            )
+        else:
+            logger.rule("Reconstruction annulee a la demande de l'utilisateur.")
+            record_artifacts(job_id, ctx.out_dir)
+            finish_job(job_id, "cancelled", "Annule par l'utilisateur.")
     except StepFailed as exc:
         logger.rule(f"ECHEC : {exc}")
         record_artifacts(job_id, ctx.out_dir)
@@ -357,7 +392,7 @@ def main() -> int:
 
     log.info("Worker pret (donnees : %s, %s threads).", settings.data_dir, settings.threads)
 
-    while not _stop_requested:
+    while not _arret_demande():
         job = claim_job()
         if job is None:
             time.sleep(POLL_INTERVAL)
