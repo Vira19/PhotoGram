@@ -277,4 +277,10 @@ INDICES = (
                       "le nombre de photos, ou choisissez un profil plus leger."),
     ("no space left", "Plus de place sur le volume de donnees."),
     ("not found", "Un fichier attendu est introuvable : voir le journal complet."),
+    ("unrecognised option", "Cette version de l'outil ne connait pas une option "
+                            "employee. Le message complet est a signaler : les noms "
+                            "d'options changent d'une version a l'autre."),
+    ("unrecognized option", "Cette version de l'outil ne connait pas une option "
+                            "employee. Le message complet est a signaler : les noms "
+                            "d'options changent d'une version a l'autre."),
 )

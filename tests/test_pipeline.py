@@ -732,3 +732,124 @@ def test_message_d_echec_sans_ligne_marquante():
 
     message = _message_echec(Step("Etape"), 1, ["premiere", "derniere"])
     assert "derniere" in message
+
+
+# --- Adaptation aux noms d'options selon la version ----------------------
+
+
+def test_options_suivent_le_nom_de_la_version(tmp_path, monkeypatch):
+    """« SiftExtraction » est devenu « FeatureExtraction » : les deux doivent passer.
+
+    C'est le cas qui a casse en production : une option codee en dur fait
+    echouer COLMAP des la premiere etape, avec « unrecognised option ».
+    """
+    from app.pipeline.colmap import _appariement_argv, _extraction_argv
+    from app.pipeline.plan import PlanContext
+
+    def argv_pour(convention: str):
+        monkeypatch.setenv("STUB_COLMAP_OPTIONS", convention)
+        monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+        activer_stubs(installer_stubs(tmp_path / f"bin-{convention}", ["colmap"]), monkeypatch)
+        ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+        return [str(a) for a in _extraction_argv(ctx)], [str(a) for a in _appariement_argv(ctx)]
+
+    extraction, appariement = argv_pour("sift")
+    assert "--SiftExtraction.use_gpu" in extraction
+    assert "--FeatureExtraction.use_gpu" not in extraction
+    assert "--SiftMatching.use_gpu" in appariement
+
+    extraction, appariement = argv_pour("feature")
+    assert "--FeatureExtraction.use_gpu" in extraction
+    assert "--SiftExtraction.use_gpu" not in extraction
+    assert "--FeatureMatching.use_gpu" in appariement
+
+
+def test_option_inconnue_est_omise(tmp_path, monkeypatch):
+    """Une option absente de cette version ne doit jamais etre passee.
+
+    La valeur par defaut de COLMAP s'applique alors, ce qui vaut toujours
+    mieux qu'un refus de la commande entiere.
+    """
+    from app.pipeline.colmap import Commande
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-omis", ["colmap"]), monkeypatch)
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+
+    commande = Commande(ctx, "feature_extractor")
+    commande.facultative(("--Option.qui.nexiste.pas",), "valeur")
+    assert "--Option.qui.nexiste.pas" not in commande.build()
+
+    commande.facultative(("--ImageReader.camera_model",), "SIMPLE_RADIAL")
+    assert "--ImageReader.camera_model" in commande.build()
+
+
+def test_repli_au_nom_historique_sans_aide(tmp_path, monkeypatch):
+    """Si --help ne repond pas, on tente le nom historique plutot que rien."""
+    from app.pipeline.colmap import Commande
+    from app.pipeline.plan import PlanContext
+
+    dossier = tmp_path / "bin-muet"
+    dossier.mkdir()
+    faux = dossier / "colmap"
+    faux.write_text("#!/bin/sh\nexit 1\n")
+    faux.chmod(0o755)
+    activer_stubs(dossier, monkeypatch)
+
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+    commande = Commande(ctx, "feature_extractor")
+    commande.facultative(("--SiftExtraction.use_gpu", "--FeatureExtraction.use_gpu"), "1")
+    assert "--SiftExtraction.use_gpu" in commande.build()
+
+
+def test_suffixe_resout_un_nom_inconnu(tmp_path, monkeypatch):
+    """Un troisieme nom, non prevu, reste utilisable s'il est sans ambiguite."""
+    from app.pipeline.colmap import Commande
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-suffixe", ["colmap"]), monkeypatch)
+    ctx = PlanContext(1, 1, tmp_path / "j", get_preset("sparse"), detect_toolchain(), 4)
+
+    commande = Commande(ctx, "feature_extractor")
+    # Aucun de ces alias n'existe, mais le stub expose SiftExtraction.use_gpu.
+    nom = commande.resoudre(("--Inconnu.use_gpu",), suffixe="use_gpu")
+    assert nom == "--SiftExtraction.use_gpu"
+
+
+def test_aide_mise_en_cache(tmp_path, monkeypatch):
+    """Le plan est construit a chaque job : interroger --help une fois suffit."""
+    from app.pipeline.colmap import _CACHE_OPTIONS, options_disponibles
+
+    dossier = tmp_path / "bin-cache-aide"
+    dossier.mkdir()
+    compteur = dossier / "appels.txt"
+    faux = dossier / "colmap"
+    faux.write_text(f"#!/bin/sh\necho x >> {compteur}\necho '  --database_path arg'\n")
+    faux.chmod(0o755)
+
+    _CACHE_OPTIONS.clear()
+    assert options_disponibles(str(faux), "feature_extractor") == {"--database_path"}
+    assert options_disponibles(str(faux), "feature_extractor") == {"--database_path"}
+    assert compteur.read_text().count("x") == 1
+    # Une autre sous-commande est interrogee separement.
+    options_disponibles(str(faux), "mapper")
+    assert compteur.read_text().count("x") == 2
+
+
+def test_job_complet_avec_la_convention_recente(client_connecte, photo_jpeg, tmp_path, monkeypatch):
+    """Une reconstruction entiere doit aboutir sur une version au nouveau nommage."""
+    monkeypatch.setenv("STUB_COLMAP_OPTIONS", "feature")
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-recent", ["colmap"]), monkeypatch)
+
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="balanced")
+    job_id = mettre_en_file(project_id, "balanced")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+    fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
+    assert {"nuage_epars.ply", "nuage_dense.ply", "maillage.ply"} <= fichiers

@@ -110,6 +110,47 @@ travail = pathlib.Path(opt("-w", "."))
 
 if nom == "colmap":
     sous_commande = args[0]
+
+    # COLMAP expose ses options par --help, et leurs noms changent selon les
+    # versions : le stub sait jouer les deux conventions pour que
+    # l'adaptation soit reellement testee.
+    if "--help" in args:
+        prefixe = "Feature" if os.environ.get("STUB_COLMAP_OPTIONS") == "feature" else "Sift"
+        communes = ["--help", "--project_path"]
+        par_commande = {
+            "feature_extractor": [
+                "--database_path", "--image_path",
+                "--ImageReader.single_camera", "--ImageReader.camera_model",
+                f"--{prefixe}Extraction.use_gpu", f"--{prefixe}Extraction.num_threads",
+                f"--{prefixe}Extraction.max_image_size",
+            ],
+            "exhaustive_matcher": [
+                "--database_path",
+                f"--{prefixe}Matching.use_gpu", f"--{prefixe}Matching.num_threads",
+            ],
+            "sequential_matcher": [
+                "--database_path",
+                f"--{prefixe}Matching.use_gpu", f"--{prefixe}Matching.num_threads",
+            ],
+            "mapper": ["--database_path", "--image_path", "--output_path", "--Mapper.num_threads"],
+            "model_converter": ["--input_path", "--output_path", "--output_type"],
+            "image_undistorter": [
+                "--image_path", "--input_path", "--output_path",
+                "--output_type", "--max_image_size",
+            ],
+            "patch_match_stereo": [
+                "--workspace_path", "--workspace_format",
+                "--PatchMatchStereo.geom_consistency", "--PatchMatchStereo.max_image_size",
+            ],
+            "stereo_fusion": [
+                "--workspace_path", "--workspace_format", "--input_type", "--output_path",
+            ],
+            "poisson_mesher": ["--input_path", "--output_path"],
+        }
+        print("Options can either be specified via command-line or in a .ini file.")
+        for option in communes + par_commande.get(sous_commande, []):
+            print(f"  {option} arg")
+        sys.exit(0)
     if sous_commande == "feature_extractor":
         if os.environ.get("STUB_SIFT_GPU_CASSE") == "1" and opt("--SiftExtraction.use_gpu") == "1":
             sys.stderr.write("ERROR: SiftGPU not fully supported on this system.\n")

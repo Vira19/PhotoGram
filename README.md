@@ -90,6 +90,12 @@ son incapacité, une version avec CUDA se plaint d'abord de l'espace de travail.
 Le résultat est mis en cache. `PHOTOGRAM_COLMAP_CUDA=1` ou `0` tranche à la
 main si besoin.
 
+Les noms d'options de COLMAP changent d'une version à l'autre — `SiftExtraction`
+est devenu `FeatureExtraction`, par exemple. PhotoGram ne les code pas en dur :
+chaque commande demande à COLMAP la liste de ses options (`--help`, mise en
+cache) et n'emploie que celles qui existent. Une option inconnue est omise, et
+COLMAP applique sa valeur par défaut.
+
 La chaîne est choisie automatiquement : OpenMVG dès qu'il est complet pour le
 profil demandé, COLMAP sinon. `PHOTOGRAM_BACKEND` permet de forcer l'un ou
 l'autre. La page **État du système** affiche ce qui est réellement installé, et
@@ -351,7 +357,8 @@ Premier réflexe : `./scripts/diagnose.sh`.
 | Jobs en attente mais rien ne démarre | `systemctl status photogram-worker` |
 | Profils grisés dans l'interface | Chaîne non installée : voir la page **État du système**. |
 | Un réglage de `.env` reste ignoré | `--diagnostic` affiche les lignes réellement lues. Sous Windows, vérifier qu'aucun `.env.txt` n'a été créé par le Bloc-notes. |
-| « Détection des points caractéristiques » échoue | L'accélération GPU de SIFT. Le pipeline réessaie tout seul sur processeur ; pour l'écarter d'emblée, `PHOTOGRAM_COLMAP_GPU=0`. |
+| « Détection des points caractéristiques » échoue | Souvent l'accélération GPU de SIFT. Le pipeline réessaie tout seul sur processeur ; pour l'écarter d'emblée, `PHOTOGRAM_COLMAP_GPU=0`. |
+| `unrecognised option '--Xxx'` | Les noms d'options de COLMAP changent selon les versions ; PhotoGram les découvre via `--help`. Si le message persiste, la sous-commande concernée est à signaler. |
 | Plus de place sur le disque | Vérifier que `PHOTOGRAM_KEEP_INTERMEDIATES` vaut `0`, et supprimer les vieilles reconstructions. |
 
 État complet de la machine et du pipeline : `/health` (aussi disponible en JSON
@@ -372,7 +379,7 @@ app/
     binaries.py      détection des outils et choix de la chaîne
     presets.py       profils de qualité
     plan.py          plan OpenMVG + OpenMVS
-    colmap.py        plan COLMAP (épars, et dense via CUDA)
+    colmap.py        plan COLMAP (épars, et dense via CUDA), options découvertes
     runner.py        exécution, journalisation, annulation
   routes/            authentification, projets et photos, reconstructions
   templates/         gabarits Jinja2

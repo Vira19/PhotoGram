@@ -1,28 +1,129 @@
-"""Chaine COLMAP : nuage epars, sans GPU.
+"""Chaine COLMAP.
 
-Interet sur un Raspberry Pi : COLMAP existe en paquet Debian
-(``apt install colmap``), la ou OpenMVG et OpenMVS demandent une compilation
-de plusieurs heures sur la machine cible.
+Interet : COLMAP existe en paquet Debian (``apt install colmap``) et en
+binaires Windows officiels, la ou OpenMVG et OpenMVS demandent une
+compilation de plusieurs heures.
 
-La densification (``patch_match_stereo``) exige en revanche CUDA, sans
-equivalent CPU. Sur une machine equipee d'une carte NVIDIA et avec la version
-« -cuda » de COLMAP, la chaine va donc jusqu'au maillage sans rien compiler ;
-sinon elle s'arrete au nuage epars, et le maillage demande OpenMVG + OpenMVS.
+La densification (``patch_match_stereo``) exige CUDA, sans equivalent CPU. Sur
+une machine equipee d'une carte NVIDIA et avec la version « -cuda », la chaine
+va donc jusqu'au maillage sans rien compiler ; sinon elle s'arrete au nuage
+epars, et le maillage demande OpenMVG + OpenMVS.
 
 COLMAP ne texture pas les maillages : il produit un maillage colore par
 sommet, ce qui suffit a visualiser la forme. Une vraie texture reste du
 ressort d'OpenMVS.
+
+**Les noms d'options changent d'une version a l'autre** : ``SiftExtraction``
+est devenu ``FeatureExtraction`` dans les versions recentes, par exemple.
+Plutot que de coder en dur un jeu de noms qui sera faux ailleurs, chaque
+commande demande a COLMAP la liste de ses options (``--help``) et n'emploie
+que celles qui existent reellement. Une option introuvable est simplement
+omise : COLMAP applique alors sa valeur par defaut, ce qui reste correct.
 """
 
 from __future__ import annotations
 
-from typing import Callable, List
+import os
+import re
+import subprocess
+from typing import Callable, Dict, List, Optional, Sequence, Set
 
 from .plan import PlanContext, Step, collect_artifacts, prepare_images
 
 #: Au-dela, la mise en correspondance exhaustive devient couteuse ; on bascule
 #: sur un appariement sequentiel, adapte a une prise de vue en rotation.
 SEUIL_APPARIEMENT_EXHAUSTIF = 60
+
+#: Ce que COLMAP affiche quand l'acceleration graphique de SIFT se derobe.
+MOTIFS_GPU = ("gpu", "opengl", "siftgpu", "glew", "display")
+
+#: Options acceptees, par (binaire, taille, date, sous-commande). Interroger
+#: COLMAP coute un lancement de processus ; le plan est construit a chaque job.
+_CACHE_OPTIONS: Dict[tuple, Set[str]] = {}
+
+_MOTIF_OPTION = re.compile(r"--([A-Za-z][A-Za-z0-9_.]*)")
+
+
+def options_disponibles(colmap: str, sous_commande: str) -> Set[str]:
+    """Options acceptees par une sous-commande, lues dans son aide.
+
+    Un ensemble vide signifie « inconnu » : l'aide n'a pas pu etre obtenue, et
+    l'appelant se rabat alors sur les noms historiques.
+    """
+    try:
+        etat = os.stat(colmap)
+        cle = (colmap, etat.st_size, int(etat.st_mtime), sous_commande)
+    except OSError:
+        return set()
+
+    if cle in _CACHE_OPTIONS:
+        return _CACHE_OPTIONS[cle]
+
+    options: Set[str] = set()
+    extra = {}
+    if os.name == "nt":
+        extra["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    try:
+        execution = subprocess.run(
+            [colmap, sous_commande, "--help"],
+            capture_output=True, text=True, errors="replace", timeout=60, **extra,
+        )
+        for nom in _MOTIF_OPTION.findall(execution.stdout + execution.stderr):
+            options.add("--" + nom)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        options = set()
+
+    _CACHE_OPTIONS[cle] = options
+    return options
+
+
+class Commande:
+    """Construit une ligne de commande en n'employant que des options connues."""
+
+    def __init__(self, ctx: PlanContext, sous_commande: str):
+        self.ctx = ctx
+        self.sous_commande = sous_commande
+        self.colmap = ctx.tools.require("colmap")
+        self.disponibles = options_disponibles(self.colmap, sous_commande)
+        self.argv: List[str] = [self.colmap, sous_commande]
+
+    def obligatoire(self, nom: str, valeur) -> "Commande":
+        """Option sans laquelle la commande n'a pas de sens : toujours passee."""
+        self.argv += [nom, str(valeur)]
+        return self
+
+    def facultative(self, alias: Sequence[str], valeur, suffixe: str = "") -> "Commande":
+        """Option de reglage, passee seulement si cette version la connait."""
+        nom = self.resoudre(alias, suffixe)
+        if nom:
+            self.argv += [nom, str(valeur)]
+        return self
+
+    def resoudre(self, alias: Sequence[str], suffixe: str = "") -> Optional[str]:
+        if not self.disponibles:
+            # Aide indisponible : on tente le nom historique plutot que rien.
+            return alias[0] if alias else None
+        for nom in alias:
+            if nom in self.disponibles:
+                return nom
+        if suffixe:
+            # Dernier recours : une option dont le nom se termine par le
+            # reglage cherche, a condition qu'elle soit sans ambiguite.
+            candidats = sorted(
+                nom for nom in self.disponibles
+                if nom.endswith("." + suffixe) or nom == "--" + suffixe
+            )
+            if len(candidats) == 1:
+                return candidats[0]
+        return None
+
+    def build(self) -> List[str]:
+        return list(self.argv)
+
+
+# --------------------------------------------------------------------------
+# Chemins et reglages derives
+# --------------------------------------------------------------------------
 
 
 def _database(ctx: PlanContext):
@@ -40,10 +141,6 @@ def _taille_max(ctx: PlanContext) -> int:
     l'absence de plafond par 0.
     """
     return ctx.preset.densify_max_resolution or -1
-
-
-#: Ce que COLMAP affiche quand l'acceleration graphique de SIFT se derobe.
-MOTIFS_GPU = ("gpu", "opengl", "siftgpu", "glew", "display")
 
 
 def _gpu(ctx: PlanContext) -> str:
@@ -64,68 +161,120 @@ def _gpu(ctx: PlanContext) -> str:
     return "1" if ctx.tools.colmap_dense else "0"
 
 
-def _repli_sans_gpu(construire, drapeau: str):
-    """Rejoue la meme etape sur processeur si le GPU s'est derobe.
+# --------------------------------------------------------------------------
+# Commandes
+# --------------------------------------------------------------------------
 
-    Un echec d'acceleration graphique est frequent et sans rapport avec les
-    donnees : perdre une reconstruction pour cela serait absurde, alors que la
-    meme etape aboutit sur processeur, seulement plus lentement.
-    """
+#: Le prefixe des options SIFT a change de nom selon les versions ; on accepte
+#: les deux, et le suffixe sert de filet si un troisieme nom apparait.
+ALIAS_EXTRACTION = {
+    "use_gpu": ("--SiftExtraction.use_gpu", "--FeatureExtraction.use_gpu"),
+    "num_threads": ("--SiftExtraction.num_threads", "--FeatureExtraction.num_threads"),
+    "max_image_size": ("--SiftExtraction.max_image_size", "--FeatureExtraction.max_image_size"),
+}
 
-    def repli(ctx: PlanContext, sortie: str):
-        if _gpu(ctx) != "1":
-            return None  # deja sur processeur, rien a tenter
-        if not any(motif in sortie for motif in MOTIFS_GPU):
-            return None
-        argv = [str(part) for part in construire(ctx)]
-        argv[argv.index(drapeau) + 1] = "0"
-        return argv
-
-    return repli
+ALIAS_APPARIEMENT = {
+    "use_gpu": ("--SiftMatching.use_gpu", "--FeatureMatching.use_gpu"),
+    "num_threads": ("--SiftMatching.num_threads", "--FeatureMatching.num_threads"),
+}
 
 
 def _extraction_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "feature_extractor",
-        "--database_path", _database(ctx),
-        "--image_path", ctx.images_dir,
-        # Une seule camera pour toute la serie : c'est le cas courant (un seul
-        # appareil) et cela stabilise nettement la calibration sur peu de vues.
-        "--ImageReader.single_camera", "1",
-        "--ImageReader.camera_model", "SIMPLE_RADIAL",
-        "--SiftExtraction.use_gpu", _gpu(ctx),
-        "--SiftExtraction.num_threads", ctx.threads,
-        "--SiftExtraction.max_image_size", ctx.preset_max_image_size,
-    ]
+    commande = Commande(ctx, "feature_extractor")
+    commande.obligatoire("--database_path", _database(ctx))
+    commande.obligatoire("--image_path", ctx.images_dir)
+    # Une seule camera pour toute la serie : c'est le cas courant (un seul
+    # appareil) et cela stabilise nettement la calibration sur peu de vues.
+    commande.facultative(("--ImageReader.single_camera",), "1")
+    commande.facultative(("--ImageReader.camera_model",), "SIMPLE_RADIAL")
+    commande.facultative(ALIAS_EXTRACTION["use_gpu"], _gpu(ctx), "use_gpu")
+    commande.facultative(ALIAS_EXTRACTION["num_threads"], ctx.threads, "num_threads")
+    commande.facultative(ALIAS_EXTRACTION["max_image_size"], ctx.preset_max_image_size)
+    return commande.build()
 
 
 def _appariement_argv(ctx: PlanContext) -> list:
     exhaustif = len(ctx.source_photos) <= SEUIL_APPARIEMENT_EXHAUSTIF
-    commande = "exhaustive_matcher" if exhaustif else "sequential_matcher"
-    return [
-        ctx.tools.require("colmap"), commande,
-        "--database_path", _database(ctx),
-        "--SiftMatching.use_gpu", _gpu(ctx),
-        "--SiftMatching.num_threads", ctx.threads,
-    ]
+    commande = Commande(ctx, "exhaustive_matcher" if exhaustif else "sequential_matcher")
+    commande.obligatoire("--database_path", _database(ctx))
+    commande.facultative(ALIAS_APPARIEMENT["use_gpu"], _gpu(ctx), "use_gpu")
+    commande.facultative(ALIAS_APPARIEMENT["num_threads"], ctx.threads, "num_threads")
+    return commande.build()
 
 
 def _mapper_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "mapper",
-        "--database_path", _database(ctx),
-        "--image_path", ctx.images_dir,
-        "--output_path", _sparse_dir(ctx),
-        "--Mapper.num_threads", ctx.threads,
-    ]
+    commande = Commande(ctx, "mapper")
+    commande.obligatoire("--database_path", _database(ctx))
+    commande.obligatoire("--image_path", ctx.images_dir)
+    commande.obligatoire("--output_path", _sparse_dir(ctx))
+    commande.facultative(("--Mapper.num_threads",), ctx.threads, "num_threads")
+    return commande.build()
+
+
+def _export_argv(ctx: PlanContext) -> list:
+    commande = Commande(ctx, "model_converter")
+    commande.obligatoire("--input_path", ctx.colmap_model)
+    commande.obligatoire("--output_path", ctx.out_dir / "nuage_epars.ply")
+    commande.obligatoire("--output_type", "PLY")
+    return commande.build()
+
+
+def _rapport_argv(ctx: PlanContext) -> list:
+    # Export texte du modele : lisible tel quel, et reutilisable par d'autres
+    # outils (Blender, Meshroom) si l'utilisateur veut poursuivre ailleurs.
+    commande = Commande(ctx, "model_converter")
+    commande.obligatoire("--input_path", ctx.colmap_model)
+    commande.obligatoire("--output_path", ctx.out_dir)
+    commande.obligatoire("--output_type", "TXT")
+    return commande.build()
+
+
+def _undistort_argv(ctx: PlanContext) -> list:
+    # Le calcul dense suppose des images sans distorsion ; COLMAP les reecrit
+    # dans un espace de travail dedie, avec les cameras associees.
+    commande = Commande(ctx, "image_undistorter")
+    commande.obligatoire("--image_path", ctx.images_dir)
+    commande.obligatoire("--input_path", ctx.colmap_model)
+    commande.obligatoire("--output_path", ctx.mvs_dir)
+    commande.facultative(("--output_type",), "COLMAP")
+    commande.facultative(("--max_image_size",), _taille_max(ctx))
+    return commande.build()
+
+
+def _stereo_argv(ctx: PlanContext) -> list:
+    commande = Commande(ctx, "patch_match_stereo")
+    commande.obligatoire("--workspace_path", ctx.mvs_dir)
+    commande.facultative(("--workspace_format",), "COLMAP")
+    # La verification de coherence geometrique double le temps de calcul mais
+    # elimine l'essentiel du bruit ; sans elle, le nuage dense est trop sale
+    # pour donner un maillage exploitable.
+    commande.facultative(("--PatchMatchStereo.geom_consistency",), "true")
+    commande.facultative(("--PatchMatchStereo.max_image_size",), _taille_max(ctx))
+    return commande.build()
+
+
+def _fusion_argv(ctx: PlanContext) -> list:
+    commande = Commande(ctx, "stereo_fusion")
+    commande.obligatoire("--workspace_path", ctx.mvs_dir)
+    commande.obligatoire("--output_path", ctx.out_dir / "nuage_dense.ply")
+    commande.facultative(("--workspace_format",), "COLMAP")
+    commande.facultative(("--input_type",), "geometric")
+    return commande.build()
+
+
+def _maillage_argv(ctx: PlanContext) -> list:
+    commande = Commande(ctx, "poisson_mesher")
+    commande.obligatoire("--input_path", ctx.out_dir / "nuage_dense.ply")
+    commande.obligatoire("--output_path", ctx.out_dir / "maillage.ply")
+    return commande.build()
 
 
 def _choisir_modele(ctx: PlanContext, log: Callable[[str], None]) -> None:
     """Retient le plus gros modele produit par le mapper.
 
-    COLMAP ecrit ``sparse/0``, ``sparse/1``, … : un modele par groupe d'images
-    qu'il a su relier entre elles. Plusieurs dossiers signalent une serie
-    fragmentee, ce qui merite d'etre dit a l'utilisateur.
+    COLMAP ecrit ``sparse/0``, ``sparse/1``, ... : un modele par groupe
+    d'images qu'il a su relier entre elles. Plusieurs dossiers signalent une
+    serie fragmentee, ce qui merite d'etre dit a l'utilisateur.
     """
     racine = _sparse_dir(ctx)
     modeles = sorted(p for p in racine.glob("*") if p.is_dir()) if racine.is_dir() else []
@@ -151,77 +300,48 @@ def _choisir_modele(ctx: PlanContext, log: Callable[[str], None]) -> None:
     log(f"Modele retenu : {meilleur.relative_to(ctx.job_dir)}")
 
 
-def _export_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "model_converter",
-        "--input_path", ctx.colmap_model,
-        "--output_path", ctx.out_dir / "nuage_epars.ply",
-        "--output_type", "PLY",
-    ]
+# --------------------------------------------------------------------------
+# Repli
+# --------------------------------------------------------------------------
 
 
-def _rapport_argv(ctx: PlanContext) -> list:
-    # Export texte du modele : lisible tel quel, et reutilisable par d'autres
-    # outils (Blender, Meshroom) si l'utilisateur veut poursuivre ailleurs.
-    return [
-        ctx.tools.require("colmap"), "model_converter",
-        "--input_path", ctx.colmap_model,
-        "--output_path", ctx.out_dir,
-        "--output_type", "TXT",
-    ]
+def _repli_sans_gpu(construire, alias: Sequence[str]):
+    """Rejoue la meme etape sur processeur si le GPU s'est derobe.
 
+    Un echec d'acceleration graphique est frequent et sans rapport avec les
+    donnees : perdre une reconstruction pour cela serait absurde, alors que la
+    meme etape aboutit sur processeur, seulement plus lentement.
+    """
 
-def _undistort_argv(ctx: PlanContext) -> list:
-    # Le calcul dense suppose des images sans distorsion ; COLMAP les
-    # reecrit dans un espace de travail dedie, avec les cameras associees.
-    return [
-        ctx.tools.require("colmap"), "image_undistorter",
-        "--image_path", ctx.images_dir,
-        "--input_path", ctx.colmap_model,
-        "--output_path", ctx.mvs_dir,
-        "--output_type", "COLMAP",
-        "--max_image_size", _taille_max(ctx),
-    ]
+    def repli(ctx: PlanContext, sortie: str):
+        if _gpu(ctx) != "1":
+            return None  # deja sur processeur, rien a tenter
+        if not any(motif in sortie for motif in MOTIFS_GPU):
+            return None
 
+        argv = [str(part) for part in construire(ctx)]
+        # Le nom retenu depend de la version : on cherche celui qui a
+        # effectivement ete employe plutot que de le supposer.
+        for nom in alias:
+            if nom in argv:
+                argv[argv.index(nom) + 1] = "0"
+                return argv
+        for index, part in enumerate(argv):
+            if part.endswith("use_gpu"):
+                argv[index + 1] = "0"
+                return argv
+        return None  # cette version ne permet pas de choisir : rien a retenter
 
-def _stereo_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "patch_match_stereo",
-        "--workspace_path", ctx.mvs_dir,
-        "--workspace_format", "COLMAP",
-        # La verification de coherence geometrique double le temps de calcul
-        # mais elimine l'essentiel du bruit ; sans elle, le nuage dense est
-        # trop sale pour donner un maillage exploitable.
-        "--PatchMatchStereo.geom_consistency", "true",
-        "--PatchMatchStereo.max_image_size", _taille_max(ctx),
-    ]
-
-
-def _fusion_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "stereo_fusion",
-        "--workspace_path", ctx.mvs_dir,
-        "--workspace_format", "COLMAP",
-        "--input_type", "geometric",
-        "--output_path", ctx.out_dir / "nuage_dense.ply",
-    ]
-
-
-def _maillage_argv(ctx: PlanContext) -> list:
-    return [
-        ctx.tools.require("colmap"), "poisson_mesher",
-        "--input_path", ctx.out_dir / "nuage_dense.ply",
-        "--output_path", ctx.out_dir / "maillage.ply",
-    ]
+    return repli
 
 
 def build_colmap_plan(ctx: PlanContext) -> List[Step]:
     etapes = [
         Step("Preparation des images", func=prepare_images),
         Step("Detection des points caracteristiques", argv=_extraction_argv,
-             repli=_repli_sans_gpu(_extraction_argv, "--SiftExtraction.use_gpu")),
+             repli=_repli_sans_gpu(_extraction_argv, ALIAS_EXTRACTION["use_gpu"])),
         Step("Mise en correspondance", argv=_appariement_argv,
-             repli=_repli_sans_gpu(_appariement_argv, "--SiftMatching.use_gpu")),
+             repli=_repli_sans_gpu(_appariement_argv, ALIAS_APPARIEMENT["use_gpu"])),
         Step("Positionnement des cameras (SfM)", argv=_mapper_argv),
         Step("Controle de la reconstruction", func=_choisir_modele),
         Step("Export du nuage colore", argv=_export_argv),
@@ -233,7 +353,7 @@ def build_colmap_plan(ctx: PlanContext) -> List[Step]:
             Step("Correction de la distorsion", argv=_undistort_argv),
             Step("Calcul des cartes de profondeur (GPU)", argv=_stereo_argv),
             Step("Fusion du nuage dense", argv=_fusion_argv),
-            # Le maillage peut echouer sur un nuage trop clairsemé sans que
+            # Le maillage peut echouer sur un nuage trop clairseme sans que
             # cela invalide le nuage dense, qui reste exploitable.
             Step("Reconstruction du maillage", argv=_maillage_argv, optional=True),
         ]
