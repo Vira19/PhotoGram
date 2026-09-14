@@ -168,13 +168,18 @@ COLMAP suffit pour le nuage épars et s'installe partout :
 Prendre la variante **`-cuda`** dès qu'une carte NVIDIA est présente : c'est
 elle qui débloque le maillage.
 
-Sous Windows, après avoir décompressé COLMAP, indiquer le dossier contenant
-`colmap.exe` (le sous-dossier `bin`) dans `.env` — **en modifiant la ligne existante** plutôt qu'en
-ajoutant la vôtre ailleurs :
+Après avoir décompressé COLMAP, indiquer le dossier contenant l'exécutable
+(le sous-dossier `bin` de l'archive). Le plus sûr est de laisser le programme
+écrire le réglage :
 
 ```
-PHOTOGRAM_COLMAP_BIN=C:\Outils\COLMAP-3.11-windows-cuda\bin
+scripts\run.bat --definir PHOTOGRAM_COLMAP_BIN=C:\Outils\COLMAP-3.11-windows-cuda\bin
 ```
+
+La commande met à jour la ligne existante, supprime les doublons d'une édition
+précédente, et prévient tout de suite si le dossier n'existe pas. Éditer `.env`
+à la main fonctionne aussi, à condition de modifier la ligne déjà présente
+plutôt que d'en ajouter une.
 
 Inutile de toucher au `PATH` du système. Pour vérifier la détection :
 
@@ -184,7 +189,8 @@ scripts\run.bat --diagnostic
 
 Ce diagnostic fonctionne sur tous les systèmes (`python -m app.run
 --diagnostic`) et affiche la machine, la configuration effective et les
-exécutables trouvés, en signalant un dossier mal orthographié. La page
+exécutables trouvés — en signalant un dossier mal orthographié, une clé
+absente, un doublon, ou un `.env.txt` créé par mégarde. La page
 **État du système** donne la même information dans le navigateur.
 
 Pour aller jusqu'au maillage texturé, il faut OpenMVG + OpenMVS. Sous Linux,
@@ -337,6 +343,7 @@ Premier réflexe : `./scripts/diagnose.sh`.
 | Job repassé en échec après un redémarrage | Le worker a été tué (mémoire). Réduire le nombre de photos, prendre un profil plus léger, ajouter du swap. |
 | Jobs en attente mais rien ne démarre | `systemctl status photogram-worker` |
 | Profils grisés dans l'interface | Chaîne non installée : voir la page **État du système**. |
+| Un réglage de `.env` reste ignoré | `--diagnostic` affiche les lignes réellement lues. Sous Windows, vérifier qu'aucun `.env.txt` n'a été créé par le Bloc-notes. |
 | Plus de place sur le disque | Vérifier que `PHOTOGRAM_KEEP_INTERMEDIATES` vaut `0`, et supprimer les vieilles reconstructions. |
 
 État complet de la machine et du pipeline : `/health` (aussi disponible en JSON
