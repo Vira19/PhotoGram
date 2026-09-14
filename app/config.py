@@ -28,6 +28,21 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on", "oui"}
 
 
+def lire_texte_tolerant(path: Path) -> str:
+    """Lit un fichier texte quel que soit ce que l'editeur y a laisse.
+
+    Le Bloc-notes de Windows peut enregistrer en UTF-8 avec BOM, ou en ANSI
+    (cp1252). Lire strictement en UTF-8 ferait echouer le demarrage sur un
+    fichier que l'utilisateur vient pourtant d'editer normalement.
+    """
+    for encodage in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return path.read_text(encoding=encodage)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def load_dotenv(path: Path) -> None:
     """Charge un .env minimaliste sans ecraser l'environnement existant.
 
@@ -46,7 +61,7 @@ def load_dotenv(path: Path) -> None:
         return
 
     valeurs = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in lire_texte_tolerant(path).splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

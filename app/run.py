@@ -105,6 +105,114 @@ def adresses_locales(port: int) -> list:
     return adresses
 
 
+#: Reglages dont une valeur vide est frequemment a l'origine d'un blocage.
+CLES_SURVEILLEES = (
+    "PHOTOGRAM_COLMAP_BIN",
+    "PHOTOGRAM_OPENMVG_BIN",
+    "PHOTOGRAM_OPENMVS_BIN",
+)
+
+
+def _etat_du_env(chemin: Path) -> None:
+    """Detaille ce que le fichier .env contient reellement.
+
+    Afficher « (non renseigne) » sans rien de plus laisse l'utilisateur sans
+    prise : il ne sait pas s'il a edite le mauvais fichier, si son edition
+    n'a pas ete enregistree, ou si la cle est absente du fichier.
+    """
+    from .config import lire_texte_tolerant
+
+    print(f"  Fichier      : {chemin}")
+    if not chemin.is_file():
+        print("    [KO] Ce fichier n'existe pas ; il sera cree au prochain lancement.")
+        return
+
+    contenu = lire_texte_tolerant(chemin)
+    lignes = contenu.splitlines()
+    print(f"    {len(lignes)} lignes, {chemin.stat().st_size} octets")
+
+    # Piege classique sous Windows : le Bloc-notes ajoute .txt a un fichier
+    # sans extension, et l'edition part dans un fichier que rien ne lit.
+    for parasite in sorted(chemin.parent.glob(".env.*")):
+        if parasite.name != ".env.example":
+            print(f"    [KO] Fichier parasite : {parasite.name}")
+            print("         Votre edition a probablement atterri la. Renommez-le en .env")
+
+    for cle in CLES_SURVEILLEES:
+        trouvees = [
+            ligne.strip() for ligne in lignes
+            if ligne.strip().startswith(cle + "=")
+        ]
+        if not trouvees:
+            print(f"    [--] {cle} : absent du fichier")
+            continue
+        for ligne in trouvees:
+            renseignee = ligne.split("=", 1)[1].strip() != ""
+            print(f"    {'[ok]' if renseignee else '[--]'} {ligne}"
+                  + ("" if renseignee else "   (vide)"))
+        if len(trouvees) > 1:
+            print(f"         {len(trouvees)} lignes pour cette cle : la derniere gagne.")
+
+
+def definir_reglage(chemin: Path, expression: str) -> int:
+    """Ecrit CLE=VALEUR dans le .env, sans passer par un editeur de texte.
+
+    Editer le fichier a la main sous Windows accumule les pieges : le
+    Bloc-notes qui ajoute une extension .txt, une ligne ajoutee a cote de
+    celle du modele, un chemin colle avec des guillemets. Autant proposer une
+    commande qui ne peut pas se tromper.
+    """
+    from .config import lire_texte_tolerant
+
+    if "=" not in expression:
+        print(f"  Attendu CLE=VALEUR, recu : {expression}", file=sys.stderr)
+        return 1
+
+    cle, _, valeur = expression.partition("=")
+    cle, valeur = cle.strip(), valeur.strip().strip('"').strip("'")
+
+    if not cle.startswith("PHOTOGRAM_"):
+        print(f"  « {cle} » n'est pas un reglage PhotoGram (prefixe PHOTOGRAM_ attendu).",
+              file=sys.stderr)
+        return 1
+
+    if not chemin.is_file():
+        creer_env_si_absent(chemin)
+
+    # La premiere occurrence est mise a jour et les suivantes supprimees : le
+    # fichier garde une seule ligne par reglage, lisible sans se demander
+    # laquelle fait foi.
+    resultat = []
+    trouvee = False
+    for ligne in lire_texte_tolerant(chemin).splitlines():
+        if ligne.strip().startswith(cle + "="):
+            if trouvee:
+                continue  # doublon herite d'une edition precedente
+            resultat.append(f"{cle}={valeur}")
+            trouvee = True
+        else:
+            resultat.append(ligne)
+    if not trouvee:
+        resultat.append(f"{cle}={valeur}")
+    lignes = resultat
+
+    chemin.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+
+    print(f"  {cle} = {valeur}")
+    print(f"  Ecrit dans {chemin}" + ("" if trouvee else "   (cle ajoutee)"))
+
+    if cle.endswith("_BIN") and valeur and not Path(valeur).is_dir():
+        print()
+        print(f"  ATTENTION : le dossier {valeur} n'existe pas.")
+        print("  Verifiez le chemin : il doit designer le dossier CONTENANT")
+        print("  l'executable (souvent le sous-dossier « bin » de l'archive).")
+        return 1
+
+    print()
+    print("  Verifiez la detection avec :  --diagnostic")
+    return 0
+
+
 def diagnostic() -> int:
     """Etat de l'installation, sur n'importe quel systeme.
 
@@ -130,7 +238,7 @@ def diagnostic() -> int:
 
     print()
     print("=== Configuration ===")
-    print(f"  Fichier      : {RACINE / '.env'}")
+    _etat_du_env(RACINE / ".env")
     print(f"  Donnees      : {settings.data_dir}"
           + ("" if settings.data_dir.is_dir() else "   [absent, sera cree]"))
     print(f"  Ecoute       : {settings.host}:{settings.port}")
@@ -167,6 +275,9 @@ def diagnostic() -> int:
             if valeur and not Path(valeur).is_dir():
                 etat += "   [ce dossier n'existe pas]"
             print(f"    {reglage:<24} {etat}")
+        print()
+        print("  Pour renseigner un dossier sans editer le fichier a la main :")
+        print("    python -m app.run --definir PHOTOGRAM_COLMAP_BIN=C:\\chemin\\vers\\bin")
 
     print()
     return 0
@@ -185,11 +296,17 @@ def main(argv=None) -> int:
                         help="rechargement automatique du code (developpement)")
     parser.add_argument("--diagnostic", action="store_true",
                         help="affiche l'etat de l'installation et quitte")
+    parser.add_argument("--definir", metavar="CLE=VALEUR",
+                        help="ecrit un reglage dans .env puis quitte "
+                             "(ex: --definir PHOTOGRAM_COLMAP_BIN=C:\\colmap\\bin)")
     args = parser.parse_args(argv)
 
     print("PhotoGram")
     # Le .env doit exister avant l'import de la configuration, qui la fige.
     mot_de_passe = creer_env_si_absent(RACINE / ".env")
+
+    if args.definir:
+        return definir_reglage(RACINE / ".env", args.definir)
 
     if args.diagnostic:
         return diagnostic()

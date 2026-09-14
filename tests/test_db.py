@@ -122,3 +122,45 @@ def test_variable_environnement_prime_sur_le_fichier(tmp_path, monkeypatch):
     import os
 
     assert os.environ["PHOTOGRAM_PORT"] == "9999"
+
+
+def test_env_enregistre_par_le_bloc_notes(tmp_path, monkeypatch):
+    """Un .env avec BOM UTF-8 ou en ANSI doit rester lisible.
+
+    Le Bloc-notes de Windows produit couramment l'un ou l'autre ; echouer
+    dessus reviendrait a casser le demarrage sur un fichier que l'utilisateur
+    vient d'editer tout a fait normalement.
+    """
+    from app.config import load_dotenv
+
+    avec_bom = tmp_path / "bom.env"
+    avec_bom.write_text("# entete\nPHOTOGRAM_COLMAP_BIN=C:\\Outils\\bin\n", encoding="utf-8-sig")
+    monkeypatch.delenv("PHOTOGRAM_COLMAP_BIN", raising=False)
+    load_dotenv(avec_bom)
+
+    import os
+
+    assert os.environ["PHOTOGRAM_COLMAP_BIN"] == "C:\\Outils\\bin"
+
+    # ANSI avec un accent : illisible en UTF-8 strict.
+    ansi = tmp_path / "ansi.env"
+    ansi.write_bytes("# r\xe9pertoire\nPHOTOGRAM_PORT=8123\n".encode("cp1252"))
+    monkeypatch.delenv("PHOTOGRAM_PORT", raising=False)
+    load_dotenv(ansi)
+
+    assert os.environ["PHOTOGRAM_PORT"] == "8123"
+
+
+def test_cle_avec_bom_en_premiere_ligne(tmp_path, monkeypatch):
+    """Sans commentaire d'entete, le BOM colle a la premiere cle."""
+    from app.config import load_dotenv
+
+    fichier = tmp_path / "direct.env"
+    fichier.write_text("PHOTOGRAM_PORT=7777\n", encoding="utf-8-sig")
+    monkeypatch.delenv("PHOTOGRAM_PORT", raising=False)
+
+    load_dotenv(fichier)
+
+    import os
+
+    assert os.environ["PHOTOGRAM_PORT"] == "7777"
