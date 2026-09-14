@@ -25,7 +25,8 @@ Ce que ça donne concrètement, pour ~20 photos :
 | **Qualité maximale** | Maillage raffiné pleine résolution | hors de portée | 2 à 6 h |
 
 Sur un ordinateur de bureau, les quatre profils sont accessibles ; les durées
-de la dernière colonne donnent l'ordre de grandeur.
+de la dernière colonne donnent l'ordre de grandeur. Avec une carte NVIDIA, le
+calcul des cartes de profondeur passe sur le GPU et ces durées s'effondrent.
 
 Le profil **« Nuage épars seulement »** est le mode par défaut, et le seul
 vraiment confortable sur RPi3. Il suffit largement pour vérifier qu'une série
@@ -70,9 +71,19 @@ Le découpage n'est pas gratuit :
 
 | | COLMAP | OpenMVG + OpenMVS |
 |---|---|---|
-| Installation | `apt install colmap`, une minute | compilation, plusieurs heures sur RPi3 |
+| Installation | `apt install colmap` ou archive Windows, une minute | compilation, plusieurs heures sur RPi3 |
 | Nuage épars (CPU) | oui | oui |
-| Maillage texturé (CPU) | non (densification CUDA uniquement) | oui |
+| Nuage dense + maillage | **oui, avec une carte NVIDIA** | oui, en CPU |
+| Maillage texturé | non (couleur par sommet) | oui |
+
+**Avec une carte NVIDIA, COLMAP suffit** : sa densification passe par CUDA et va
+jusqu'au maillage sans rien compiler. Le maillage est coloré par sommet plutôt
+que texturé — pour une vraie texture, il faut OpenMVS.
+
+Sans carte NVIDIA, COLMAP s'arrête au nuage épars. La capacité CUDA est
+détectée automatiquement d'après les bibliothèques livrées à côté de
+l'exécutable ; `PHOTOGRAM_COLMAP_CUDA=1` ou `0` tranche si la détection se
+trompe.
 
 La chaîne est choisie automatiquement : OpenMVG dès qu'il est complet pour le
 profil demandé, COLMAP sinon. `PHOTOGRAM_BACKEND` permet de forcer l'un ou
@@ -152,14 +163,17 @@ COLMAP suffit pour le nuage épars et s'installe partout :
 | Fedora | `sudo dnf install colmap` |
 | Arch | `sudo pacman -S colmap` |
 | macOS | `brew install colmap` |
-| Windows | [Binaires officiels](https://github.com/colmap/colmap/releases) (`...-windows-no-cuda.zip`), à décompresser |
+| Windows | [Binaires officiels](https://github.com/colmap/colmap/releases) : `...-windows-cuda.zip` avec une carte NVIDIA, `...-no-cuda.zip` sinon |
+
+Prendre la variante **`-cuda`** dès qu'une carte NVIDIA est présente : c'est
+elle qui débloque le maillage.
 
 Sous Windows, après avoir décompressé COLMAP, indiquer le dossier contenant
-`colmap.exe` dans `.env` — **en modifiant la ligne existante** plutôt qu'en
+`colmap.exe` (le sous-dossier `bin`) dans `.env` — **en modifiant la ligne existante** plutôt qu'en
 ajoutant la vôtre ailleurs :
 
 ```
-PHOTOGRAM_COLMAP_BIN=C:\Outils\colmap\bin
+PHOTOGRAM_COLMAP_BIN=C:\Outils\COLMAP-3.11-windows-cuda\bin
 ```
 
 Inutile de toucher au `PATH` du système. Pour vérifier la détection :
@@ -343,7 +357,7 @@ app/
     binaries.py      détection des outils et choix de la chaîne
     presets.py       profils de qualité
     plan.py          plan OpenMVG + OpenMVS
-    colmap.py        plan COLMAP
+    colmap.py        plan COLMAP (épars, et dense via CUDA)
     runner.py        exécution, journalisation, annulation
   routes/            authentification, projets et photos, reconstructions
   templates/         gabarits Jinja2

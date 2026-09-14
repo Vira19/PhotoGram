@@ -276,14 +276,15 @@ def process_job(job: dict) -> None:
 
         logger.write(f"Chaine utilisee : {ctx.backend}.")
 
-        if ctx.backend == "colmap" and not preset.sparse_only:
-            # La densification de COLMAP exige CUDA : mieux vaut le dire net
-            # que de laisser tourner des heures pour rien.
+        if ctx.backend == "colmap" and not preset.sparse_only and not tools.colmap_dense:
+            # Sans CUDA, la densification de COLMAP n'existe pas : mieux vaut
+            # le dire net que de laisser tourner des heures pour rien.
             raise StepFailed(
                 None,
-                "COLMAP ne sait produire qu'un nuage epars sans GPU NVIDIA. "
-                "Choisissez le profil « Nuage epars seulement », ou installez "
-                "OpenMVG et OpenMVS pour obtenir un maillage.",
+                "Cette version de COLMAP est compilee sans CUDA et s'arrete au "
+                "nuage epars. Choisissez le profil « Nuage epars seulement », "
+                "installez la version « -cuda » de COLMAP si la machine a une "
+                "carte NVIDIA, ou passez par OpenMVG et OpenMVS.",
             )
 
         missing = ctx.tools.missing_for(ctx.backend, preset.sparse_only)

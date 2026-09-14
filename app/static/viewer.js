@@ -152,21 +152,33 @@
       var vue = new DataView(tampon);
       var offset = entete.debutDonnees;
 
+      // Les offsets de chaque champ sont calcules une fois pour toutes : un
+      // nuage dense compte des millions de sommets, et allouer un objet par
+      // sommet suffisait a figer l'onglet. On ne lit ensuite que les champs
+      // reellement utilises, en ignorant les normales et autres attributs.
+      var pas = 0;
+      var champs = {};
+      elementSommets.proprietes.forEach(function (prop) {
+        champs[prop.nom] = { offset: pas, type: prop.type };
+        pas += TAILLES[prop.type];
+      });
+
+      var cx = champs.x, cy = champs.y, cz = champs.z;
+      if (!cx || !cy || !cz) throw new Error("Ce PLY n'a pas de coordonnees x/y/z.");
+      var cr = champs.red, cv = champs.green, cb = champs.blue;
+
       for (var v = 0; v < nombre; v++) {
-        var valeursBin = {};
-        elementSommets.proprietes.forEach(function (prop) {
-          valeursBin[prop.nom] = lireScalaire(vue, offset, prop.type, petitBoutien);
-          offset += TAILLES[prop.type];
-        });
-        positions[v * 3] = valeursBin.x;
-        positions[v * 3 + 1] = valeursBin.y;
-        positions[v * 3 + 2] = valeursBin.z;
-        if (aDesCouleurs) {
-          couleurs[v * 3] = (valeursBin.red || 0) / 255;
-          couleurs[v * 3 + 1] = (valeursBin.green || 0) / 255;
-          couleurs[v * 3 + 2] = (valeursBin.blue || 0) / 255;
+        var base = offset + v * pas;
+        positions[v * 3] = lireScalaire(vue, base + cx.offset, cx.type, petitBoutien);
+        positions[v * 3 + 1] = lireScalaire(vue, base + cy.offset, cy.type, petitBoutien);
+        positions[v * 3 + 2] = lireScalaire(vue, base + cz.offset, cz.type, petitBoutien);
+        if (aDesCouleurs && cr && cv && cb) {
+          couleurs[v * 3] = lireScalaire(vue, base + cr.offset, cr.type, petitBoutien) / 255;
+          couleurs[v * 3 + 1] = lireScalaire(vue, base + cv.offset, cv.type, petitBoutien) / 255;
+          couleurs[v * 3 + 2] = lireScalaire(vue, base + cb.offset, cb.type, petitBoutien) / 255;
         }
       }
+      offset += nombre * pas;
 
       var faces = entete.elements.filter(function (e) { return e.nom === "face"; })[0];
       if (faces && faces.nombre) {
@@ -231,7 +243,9 @@
     }
 
     var tableau = new Float32Array(positions);
-    return { positions: tableau, couleurs: null, indices: indices };
+    var couleurs = new Float32Array(tableau.length);
+    couleurs.fill(0.78);
+    return { positions: tableau, couleurs: couleurs, indices: indices };
   }
 
   /** Normales par sommet, moyennees sur les faces adjacentes. */
@@ -277,19 +291,23 @@
   ].join("\n");
 
   var VS_MAILLAGE = [
-    "attribute vec3 position; attribute vec3 normale;",
+    "attribute vec3 position; attribute vec3 normale; attribute vec3 couleur;",
     "uniform mat4 projection; uniform mat4 vue;",
-    "varying vec3 vNormale;",
-    "void main() { vNormale = normale; gl_Position = projection * vue * vec4(position, 1.0); }",
+    "varying vec3 vNormale; varying vec3 vCouleur;",
+    "void main() {",
+    "  vNormale = normale; vCouleur = couleur;",
+    "  gl_Position = projection * vue * vec4(position, 1.0);",
+    "}",
   ].join("\n");
 
+  // COLMAP colore ses maillages par sommet plutot que par texture : les
+  // ignorer rendrait un modele gris la ou l'information existe.
   var FS_MAILLAGE = [
-    "precision mediump float; varying vec3 vNormale;",
+    "precision mediump float; varying vec3 vNormale; varying vec3 vCouleur;",
     "void main() {",
     "  vec3 lumiere = normalize(vec3(0.4, 0.8, 0.6));",
     "  float diffus = abs(dot(normalize(vNormale), lumiere));",  // abs : les normales du pipeline sont parfois inversees
-    "  vec3 teinte = vec3(0.72, 0.75, 0.80) * (0.32 + 0.68 * diffus);",
-    "  gl_FragColor = vec4(teinte, 1.0);",
+    "  gl_FragColor = vec4(vCouleur * (0.32 + 0.68 * diffus), 1.0);",
     "}",
   ].join("\n");
 
@@ -355,6 +373,7 @@
     var nombreIndices = 0;
     if (aDesFaces) {
       tampon(calculerNormales(positions, geometrie.indices), "normale", 3);
+      tampon(geometrie.couleurs, "couleur", 3);
       var tamponIndices = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, tamponIndices);
       // Au-dela de 65 535 sommets il faut des indices 32 bits, via une
@@ -483,6 +502,11 @@
   // ------------------------------------------------------------- chargement
 
   window.PhotoGramViewer = {
+    // Les lecteurs sont exposes : ce sont les seules parties verifiables sans
+    // contexte WebGL, et leur arithmetique d'offsets merite d'etre testee.
+    lirePly: lirePly,
+    lireObj: lireObj,
+
     charger: function (canvas, url, extension, elementStatut) {
       function statut(message) { if (elementStatut) elementStatut.textContent = message; }
       statut("Telechargement du modele…");

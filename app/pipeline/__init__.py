@@ -23,15 +23,20 @@ def resume_chaine(tools: Toolchain) -> tuple:
             "Tous les profils sont disponibles, jusqu'au maillage texture.",
         ]
 
+    if tools.colmap_dense:
+        return "complet", [
+            f"COLMAP avec CUDA detecte : {tools.get('colmap')}",
+            "Tous les profils sont disponibles, jusqu'au maillage.",
+            "La texture reste du ressort d'OpenMVS ; COLMAP colore par sommet.",
+        ]
+
     if tools.has_colmap:
         lignes = [
-            f"COLMAP detecte : {tools.get('colmap')}",
+            f"COLMAP detecte (sans CUDA) : {tools.get('colmap')}",
             "Profil « Nuage epars seulement » disponible.",
+            "Pour un maillage : la version « -cuda » de COLMAP si la machine a",
+            "une carte NVIDIA, sinon OpenMVG et OpenMVS.",
         ]
-        if not tools.has_openmvs:
-            lignes.append(
-                "Pour un maillage texture il faut OpenMVG et OpenMVS, absents ici."
-            )
         return "partiel", lignes
 
     if not tools.missing_for("openmvg", sparse_only=True):
@@ -59,13 +64,14 @@ def preset_availability(tools: Toolchain, preference: str = "auto") -> Dict[str,
         backend = tools.choose_backend(preference, preset.sparse_only)
         manquants = tools.missing_for(backend, preset.sparse_only)
 
-        if backend == "colmap" and not preset.sparse_only:
+        if backend == "colmap" and not preset.sparse_only and not tools.colmap_dense:
             etat[cle] = {
                 "disponible": False,
                 "backend": backend,
                 "motif": (
-                    "COLMAP ne produit qu'un nuage epars sans GPU NVIDIA. "
-                    "Installez OpenMVG et OpenMVS pour obtenir un maillage."
+                    "Cette version de COLMAP est compilee sans CUDA et s'arrete "
+                    "au nuage epars. Installez la version « -cuda » de COLMAP, "
+                    "ou OpenMVG et OpenMVS."
                 ),
             }
         elif manquants:

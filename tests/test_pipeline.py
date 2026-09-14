@@ -408,3 +408,123 @@ def test_resume_openmvg_sans_openmvs(tmp_path, monkeypatch):
     niveau, lignes = resume_chaine(detect_toolchain())
     assert niveau == "partiel"
     assert "Nuage epars" in " ".join(lignes)
+
+
+# --- COLMAP avec CUDA -----------------------------------------------------
+
+
+@pytest.fixture
+def chaine_colmap_cuda(tmp_path, monkeypatch):
+    """COLMAP accompagne du runtime CUDA, comme dans l'archive « -cuda »."""
+    dossier = installer_stubs(tmp_path / "bin-cuda", ["colmap"])
+    (dossier / "cudart64_12.dll").write_bytes(b"\x00")
+    activer_stubs(dossier, monkeypatch)
+    return dossier
+
+
+def test_cuda_detecte_par_le_runtime_voisin(chaine_colmap_cuda):
+    tools = detect_toolchain()
+    assert tools.colmap_cuda is True
+    assert tools.colmap_dense is True
+    assert tools.missing_for("colmap", sparse_only=False) == []
+
+
+def test_sans_cuda_le_maillage_est_signale_manquant(chaine_colmap):
+    tools = detect_toolchain()
+    assert tools.colmap_dense is False
+    assert tools.missing_for("colmap", sparse_only=True) == []
+    assert tools.missing_for("colmap", sparse_only=False) != []
+
+
+def test_reglage_force_la_detection(chaine_colmap, monkeypatch):
+    """La detection par bibliotheque voisine doit pouvoir etre contredite."""
+    monkeypatch.setattr(settings, "colmap_cuda", "1")
+    assert detect_toolchain().colmap_cuda is True
+
+    monkeypatch.setattr(settings, "colmap_cuda", "0")
+    assert detect_toolchain().colmap_cuda is False
+
+
+def test_plan_dense_colmap(chaine_colmap_cuda, tmp_path):
+    from app.pipeline.plan import PlanContext
+
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("balanced"), detect_toolchain(), 4)
+    ctx.backend = "colmap"
+    noms = [etape.name for etape in build_plan(ctx)]
+    assert "Calcul des cartes de profondeur (GPU)" in noms
+    assert "Fusion du nuage dense" in noms
+    assert noms[-1] == "Collecte des resultats"
+
+
+def test_profil_epars_ignore_les_etapes_denses(chaine_colmap_cuda, tmp_path):
+    from app.pipeline.plan import PlanContext
+
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 4)
+    ctx.backend = "colmap"
+    noms = [etape.name for etape in build_plan(ctx)]
+    assert not any("profondeur" in n for n in noms)
+
+
+def test_job_dense_colmap_aboutit(client_connecte, photo_jpeg, chaine_colmap_cuda):
+    project_id = preparer_projet(client_connecte, photo_jpeg, preset="balanced")
+    job_id = mettre_en_file(project_id, "balanced")
+
+    worker.process_job(worker.claim_job())
+
+    resultat = db.fetch_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    assert resultat["status"] == "done", resultat["error"]
+
+    fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
+    assert {"nuage_epars.ply", "nuage_dense.ply", "maillage.ply"} <= fichiers
+
+    journal = (settings.job_dir(project_id, job_id) / "job.log").read_text()
+    assert "Chaine utilisee : colmap" in journal
+
+
+def _valeur_option(argv, option: str) -> str:
+    argv = [str(a) for a in argv]
+    return argv[argv.index(option) + 1]
+
+
+def test_sift_sur_gpu_seulement_avec_cuda(tmp_path, monkeypatch):
+    """L'extraction SIFT doit exploiter le GPU quand il est la, pas sinon.
+
+    Les deux chaines sont construites explicitement plutot que par deux
+    fixtures concurrentes, dont l'ordre d'application decidrait du resultat.
+    """
+    from app.pipeline.colmap import _appariement_argv, _extraction_argv
+    from app.pipeline.plan import PlanContext
+
+    def contexte(avec_cuda: bool):
+        dossier = installer_stubs(tmp_path / f"bin-{avec_cuda}", ["colmap"])
+        if avec_cuda:
+            (dossier / "cudart64_12.dll").write_bytes(b"\x00")
+        activer_stubs(dossier, monkeypatch)
+        return PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 4)
+
+    avec = contexte(True)
+    assert avec.tools.colmap_dense is True
+    assert _valeur_option(_extraction_argv(avec), "--SiftExtraction.use_gpu") == "1"
+    assert _valeur_option(_appariement_argv(avec), "--SiftMatching.use_gpu") == "1"
+
+    sans = contexte(False)
+    assert sans.tools.colmap_dense is False
+    assert _valeur_option(_extraction_argv(sans), "--SiftExtraction.use_gpu") == "0"
+    assert _valeur_option(_appariement_argv(sans), "--SiftMatching.use_gpu") == "0"
+
+
+def test_plafond_de_resolution_traduit_pour_colmap(tmp_path, monkeypatch):
+    """COLMAP attend -1 pour « sans limite », la ou les profils ecrivent 0."""
+    from app.pipeline.colmap import _stereo_argv
+    from app.pipeline.plan import PlanContext
+
+    dossier = installer_stubs(tmp_path / "bin-res", ["colmap"])
+    (dossier / "cudart64_12.dll").write_bytes(b"\x00")
+    activer_stubs(dossier, monkeypatch)
+
+    haute = PlanContext(1, 1, tmp_path / "j", get_preset("high"), detect_toolchain(), 4)
+    assert get_preset("high").densify_max_resolution == 0
+    assert _valeur_option(_stereo_argv(haute), "--PatchMatchStereo.max_image_size") == "-1"
+
+    equilibre = PlanContext(1, 1, tmp_path / "j", get_preset("balanced"), detect_toolchain(), 4)
+    assert _valeur_option(_stereo_argv(equilibre), "--PatchMatchStereo.max_image_size") == "1600"

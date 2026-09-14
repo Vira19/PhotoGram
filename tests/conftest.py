@@ -121,6 +121,25 @@ if nom == "colmap":
             modele = sortie / str(index)
             modele.mkdir(parents=True, exist_ok=True)
             (modele / "images.bin").write_text("i" * (100 * (index + 1)))
+    elif sous_commande == "image_undistorter":
+        sortie = pathlib.Path(opt("--output_path"))
+        for sous in ("images", "sparse", "stereo"):
+            (sortie / sous).mkdir(parents=True, exist_ok=True)
+    elif sous_commande == "patch_match_stereo":
+        travail = pathlib.Path(opt("--workspace_path"))
+        cartes = travail / "stereo" / "depth_maps"
+        cartes.mkdir(parents=True, exist_ok=True)
+        (cartes / "vue.geometric.bin").write_text("profondeur")
+    elif sous_commande == "stereo_fusion":
+        cible = pathlib.Path(opt("--output_path"))
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(
+            "ply\nformat ascii 1.0\nelement vertex 1\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "end_header\n0 0 0\n"
+        )
+    elif sous_commande == "poisson_mesher":
+        pathlib.Path(opt("--output_path")).write_text("ply maillage\n")
     elif sous_commande == "model_converter":
         cible = pathlib.Path(opt("--output_path"))
         if opt("--output_type") == "PLY":

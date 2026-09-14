@@ -79,6 +79,8 @@ class Settings:
     openmvg_bin: str = ""
     openmvs_bin: str = ""
     colmap_bin: str = ""
+    #: "auto", "1" ou "0" : COLMAP a-t-il ete compile avec CUDA ?
+    colmap_cuda: str = "auto"
     sensor_db: str = ""
 
     @classmethod
@@ -100,6 +102,7 @@ class Settings:
             openmvg_bin=_env("PHOTOGRAM_OPENMVG_BIN"),
             openmvs_bin=_env("PHOTOGRAM_OPENMVS_BIN"),
             colmap_bin=_env("PHOTOGRAM_COLMAP_BIN"),
+            colmap_cuda=_env("PHOTOGRAM_COLMAP_CUDA", "auto") or "auto",
             sensor_db=_env("PHOTOGRAM_SENSOR_DB"),
         )
 

@@ -56,6 +56,10 @@ MVG_TO_MVS = "openMVG_main_openMVG2openMVS"
 #: COLMAP : un seul binaire a sous-commandes, disponible en paquet Debian.
 COLMAP_BINARY = "colmap"
 
+#: Prefixes des bibliotheques du runtime CUDA, livrees a cote de l'executable
+#: dans la version « -cuda » de COLMAP et absentes de la version « -no-cuda ».
+MARQUEURS_CUDA = ("cudart", "libcudart")
+
 #: Binaires OpenMVS. Certaines distributions les prefixent.
 MVS_BINARIES = ["DensifyPointCloud", "ReconstructMesh", "RefineMesh", "TextureMesh"]
 MVS_PREFIXES = ["", "OpenMVS_", "openMVS_"]
@@ -91,6 +95,34 @@ def _find(name: str, prefixes: Optional[List[str]] = None) -> Optional[str]:
     return None
 
 
+def _colmap_avec_cuda(chemin: str) -> bool:
+    """COLMAP peut-il densifier, c'est-a-dire a-t-il ete compile avec CUDA ?
+
+    Il n'existe pas d'option pour le demander : les deux versions acceptent les
+    memes sous-commandes, et celle sans CUDA n'echoue qu'au moment du calcul.
+    On se rabat sur la presence du runtime CUDA a cote de l'executable, ce qui
+    distingue les archives officielles « -cuda » et « -no-cuda ».
+    Le reglage PHOTOGRAM_COLMAP_CUDA permet de trancher a la main.
+    """
+    reglage = settings.colmap_cuda.lower()
+    if reglage in ("1", "true", "oui", "on"):
+        return True
+    if reglage in ("0", "false", "non", "off"):
+        return False
+
+    binaire = Path(chemin)
+    for dossier in (binaire.parent, binaire.parent / "lib", binaire.parent.parent / "lib"):
+        if not dossier.is_dir():
+            continue
+        try:
+            for fichier in dossier.iterdir():
+                if fichier.name.lower().startswith(MARQUEURS_CUDA):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 @dataclass
 class Toolchain:
     """Instantane de ce qui est installe sur la machine."""
@@ -98,6 +130,8 @@ class Toolchain:
     binaries: Dict[str, str] = field(default_factory=dict)
     sensor_db: Optional[str] = None
     modern_openmvg: bool = False
+    #: COLMAP compile avec CUDA : condition de la densification.
+    colmap_cuda: bool = False
 
     def get(self, name: str) -> Optional[str]:
         return self.binaries.get(name)
@@ -118,6 +152,11 @@ class Toolchain:
     @property
     def has_colmap(self) -> bool:
         return COLMAP_BINARY in self.binaries
+
+    @property
+    def colmap_dense(self) -> bool:
+        """COLMAP peut-il aller au-dela du nuage epars sur cette machine ?"""
+        return self.has_colmap and self.colmap_cuda
 
     @property
     def has_openmvs(self) -> bool:
@@ -145,7 +184,13 @@ class Toolchain:
         installe.
         """
         if backend == "colmap":
-            return [] if self.has_colmap else [COLMAP_BINARY]
+            if not self.has_colmap:
+                return [COLMAP_BINARY]
+            # La densification de COLMAP passe exclusivement par CUDA : sans
+            # elle, seul le nuage epars est a sa portee.
+            if not sparse_only and not self.colmap_cuda:
+                return ["COLMAP compile avec CUDA"]
+            return []
 
         out = [name for name in MVG_REQUIRED if name not in self.binaries]
         if not self.modern_openmvg and MVG_LEGACY_SFM not in self.binaries:
@@ -183,6 +228,7 @@ class Toolchain:
             "openmvg": self.has_openmvg,
             "openmvs": self.has_openmvs,
             "colmap": self.has_colmap,
+            "colmap_cuda": self.colmap_cuda,
             "backends": self.backends(),
             "version_openmvg": "2.x" if self.modern_openmvg else "1.x",
             "sensor_db": self.sensor_db,
@@ -204,6 +250,7 @@ def detect_toolchain() -> Toolchain:
     colmap = _find(COLMAP_BINARY)
     if colmap:
         tools.binaries[COLMAP_BINARY] = colmap
+        tools.colmap_cuda = _colmap_avec_cuda(colmap)
 
     for name in MVS_BINARIES:
         path = _find(name, MVS_PREFIXES)
