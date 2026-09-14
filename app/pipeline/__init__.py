@@ -9,6 +9,45 @@ from .plan import Step, build_plan
 from .presets import PRESETS, Preset, get_preset
 
 
+def resume_chaine(tools: Toolchain) -> tuple:
+    """Etat de la chaine de reconstruction : (niveau, lignes a afficher).
+
+    Le niveau vaut « complet », « partiel » ou « absent ». Un resume commun
+    evite que le worker n'annonce l'absence d'OpenMVG alors que COLMAP est
+    installe et parfaitement utilisable, ce qui inquiete pour rien.
+    """
+    if tools.has_openmvg and tools.has_openmvs:
+        version = "2.x" if tools.modern_openmvg else "1.x"
+        return "complet", [
+            f"Chaine complete : OpenMVG {version} + OpenMVS.",
+            "Tous les profils sont disponibles, jusqu'au maillage texture.",
+        ]
+
+    if tools.has_colmap:
+        lignes = [
+            f"COLMAP detecte : {tools.get('colmap')}",
+            "Profil « Nuage epars seulement » disponible.",
+        ]
+        if not tools.has_openmvs:
+            lignes.append(
+                "Pour un maillage texture il faut OpenMVG et OpenMVS, absents ici."
+            )
+        return "partiel", lignes
+
+    if not tools.missing_for("openmvg", sparse_only=True):
+        return "partiel", [
+            "OpenMVG detecte sans OpenMVS.",
+            "Profil « Nuage epars seulement » disponible ; pas de maillage.",
+        ]
+
+    return "absent", [
+        "Aucune chaine de reconstruction detectee.",
+        "Seul le televersement des photos fonctionne pour l'instant.",
+        "Le plus simple : installer COLMAP (voir README), puis renseigner",
+        "PHOTOGRAM_COLMAP_BIN dans .env si l'executable n'est pas dans le PATH.",
+    ]
+
+
 def preset_availability(tools: Toolchain, preference: str = "auto") -> Dict[str, dict]:
     """Pour chaque profil, dit s'il peut tourner ici et pourquoi non le cas echeant.
 
@@ -49,4 +88,5 @@ __all__ = [
     "Step",
     "build_plan",
     "preset_availability",
+    "resume_chaine",
 ]

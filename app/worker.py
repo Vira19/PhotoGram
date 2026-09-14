@@ -25,6 +25,7 @@ from typing import Optional
 
 from . import db, system
 from .config import settings
+from .pipeline import resume_chaine
 from .pipeline.binaries import detect_toolchain
 from .pipeline.plan import PlanContext, build_plan
 from .pipeline.presets import get_preset
@@ -413,12 +414,10 @@ def main() -> int:
     settings.ensure_dirs()
     requeue_orphans()
 
-    tools = detect_toolchain()
-    if tools.missing():
-        log.warning("Binaires du pipeline manquants : %s", ", ".join(tools.missing()))
-    else:
-        log.info("Chaine detectee : OpenMVG %s + OpenMVS.",
-                 "2.x" if tools.modern_openmvg else "1.x")
+    niveau, lignes = resume_chaine(detect_toolchain())
+    journalise = log.warning if niveau == "absent" else log.info
+    for ligne in lignes:
+        journalise("%s", ligne)
 
     log.info("Worker pret (donnees : %s, %s threads).", settings.data_dir, settings.threads)
 

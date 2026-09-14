@@ -8,6 +8,7 @@ reellement ete trouve, plutot que de supposer une version.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,15 +71,23 @@ def _search_dirs() -> List[Path]:
 
 
 def _find(name: str, prefixes: Optional[List[str]] = None) -> Optional[str]:
+    """Cherche un executable dans le PATH puis dans les dossiers configures.
+
+    La recherche passe entierement par ``shutil.which``, y compris pour les
+    dossiers explicites : c'est lui qui applique PATHEXT sous Windows, ou le
+    fichier s'appelle ``colmap.exe`` et non ``colmap``. Une comparaison de nom
+    exacte y rendrait PHOTOGRAM_COLMAP_BIN et consorts sans effet.
+    """
+    dossiers = os.pathsep.join(str(d) for d in _search_dirs())
     for prefix in prefixes or [""]:
         candidate = prefix + name
         found = shutil.which(candidate)
         if found:
             return found
-        for directory in _search_dirs():
-            path = directory / candidate
-            if path.is_file():
-                return str(path)
+        if dossiers:
+            found = shutil.which(candidate, path=dossiers)
+            if found:
+                return found
     return None
 
 

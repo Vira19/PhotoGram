@@ -105,6 +105,73 @@ def adresses_locales(port: int) -> list:
     return adresses
 
 
+def diagnostic() -> int:
+    """Etat de l'installation, sur n'importe quel systeme.
+
+    L'equivalent de scripts/diagnose.sh, qui est un script bash et ne sert donc
+    a rien sous Windows. Ne divulgue ni mot de passe ni cle : la sortie peut
+    etre recopiee telle quelle dans un ticket.
+    """
+    import platform
+
+    from . import hardware
+    from .config import settings
+    from .pipeline import detect_toolchain, resume_chaine
+
+    print()
+    print("=== Machine ===")
+    print(f"  Systeme      : {platform.platform()}")
+    print(f"  Python       : {platform.python_version()} ({sys.executable})")
+    memoire = hardware.memoire()
+    total = memoire['total'] / (1024 ** 3)
+    print(f"  Processeur   : {os.cpu_count()} coeurs")
+    print(f"  Memoire      : {total:.1f} Gio"
+          + ("" if memoire["complet"] else " (detail indisponible sur ce systeme)"))
+
+    print()
+    print("=== Configuration ===")
+    print(f"  Fichier      : {RACINE / '.env'}")
+    print(f"  Donnees      : {settings.data_dir}"
+          + ("" if settings.data_dir.is_dir() else "   [absent, sera cree]"))
+    print(f"  Ecoute       : {settings.host}:{settings.port}")
+    print(f"  Threads      : {settings.threads}")
+    print(f"  Resolution   : {settings.work_max_dim} px    Photos max : {settings.max_photos}")
+    print(f"  Backend      : {settings.backend}")
+    for probleme in settings.problems():
+        print(f"  [KO] {probleme}")
+
+    print()
+    print("=== Chaine de reconstruction ===")
+    outils = detect_toolchain()
+    niveau, lignes = resume_chaine(outils)
+    for index, ligne in enumerate(lignes):
+        # Le marqueur ne porte que sur le constat : les lignes suivantes sont
+        # des explications, les prefixer toutes noierait le signal.
+        marqueur = "[KO] " if (niveau == "absent" and index == 0) else "     "
+        print(f"  {marqueur}{ligne}")
+
+    if outils.binaries:
+        print()
+        print("  Executables trouves :")
+        for nom, chemin in sorted(outils.binaries.items()):
+            print(f"    {nom:<40} {chemin}")
+    else:
+        print()
+        print("  Dossiers explores en plus du PATH :")
+        for reglage, valeur in (
+            ("PHOTOGRAM_COLMAP_BIN", settings.colmap_bin),
+            ("PHOTOGRAM_OPENMVG_BIN", settings.openmvg_bin),
+            ("PHOTOGRAM_OPENMVS_BIN", settings.openmvs_bin),
+        ):
+            etat = valeur or "(non renseigne)"
+            if valeur and not Path(valeur).is_dir():
+                etat += "   [ce dossier n'existe pas]"
+            print(f"    {reglage:<24} {etat}")
+
+    print()
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m app.run",
@@ -116,11 +183,16 @@ def main(argv=None) -> int:
                         help="ne lance que l'interface web (worker deja demarre ailleurs)")
     parser.add_argument("--dev", action="store_true",
                         help="rechargement automatique du code (developpement)")
+    parser.add_argument("--diagnostic", action="store_true",
+                        help="affiche l'etat de l'installation et quitte")
     args = parser.parse_args(argv)
 
     print("PhotoGram")
     # Le .env doit exister avant l'import de la configuration, qui la fige.
     mot_de_passe = creer_env_si_absent(RACINE / ".env")
+
+    if args.diagnostic:
+        return diagnostic()
 
     from .config import settings
 

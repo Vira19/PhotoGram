@@ -81,3 +81,44 @@ def test_suppression_projet_cascade():
     assert db.fetch_all("SELECT * FROM photos WHERE project_id = ?", (project_id,)) == []
     assert db.fetch_all("SELECT * FROM jobs WHERE project_id = ?", (project_id,)) == []
     assert db.fetch_all("SELECT * FROM job_steps WHERE job_id = ?", (job_id,)) == []
+
+
+def test_derniere_ligne_du_env_gagne(tmp_path, monkeypatch):
+    """Un reglage ajoute en fin de .env doit primer sur la ligne vide du modele.
+
+    Le modele livre contient les cles avec une valeur vide ; ajouter sa valeur
+    a la fin est le geste naturel, et il ne doit pas etre ignore.
+    """
+    from app.config import load_dotenv
+
+    fichier = tmp_path / ".env"
+    fichier.write_text(
+        "# commentaire\n"
+        "PHOTOGRAM_COLMAP_BIN=\n"
+        "PHOTOGRAM_PORT=8000\n"
+        "\n"
+        "PHOTOGRAM_COLMAP_BIN=C:\\Outils\\colmap\\bin\n"
+    )
+    for cle in ("PHOTOGRAM_COLMAP_BIN", "PHOTOGRAM_PORT"):
+        monkeypatch.delenv(cle, raising=False)
+
+    load_dotenv(fichier)
+
+    import os
+
+    assert os.environ["PHOTOGRAM_COLMAP_BIN"] == "C:\\Outils\\colmap\\bin"
+    assert os.environ["PHOTOGRAM_PORT"] == "8000"
+
+
+def test_variable_environnement_prime_sur_le_fichier(tmp_path, monkeypatch):
+    from app.config import load_dotenv
+
+    fichier = tmp_path / ".env"
+    fichier.write_text("PHOTOGRAM_PORT=8000\n")
+    monkeypatch.setenv("PHOTOGRAM_PORT", "9999")
+
+    load_dotenv(fichier)
+
+    import os
+
+    assert os.environ["PHOTOGRAM_PORT"] == "9999"

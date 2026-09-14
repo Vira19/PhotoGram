@@ -33,16 +33,27 @@ def load_dotenv(path: Path) -> None:
 
     On evite une dependance supplementaire : le format supporte est
     ``CLE=valeur``, les lignes vides et les commentaires ``#``.
+
+    En cas de cle repetee, la **derniere** ligne l'emporte : ajouter un
+    reglage a la fin du fichier est le reflexe naturel, et le modele fourni
+    contient deja ces cles avec une valeur vide. Les faire gagner reviendrait
+    a ignorer silencieusement ce que l'utilisateur vient d'ecrire.
+
+    Une variable d'environnement deja definie, elle, garde la priorite sur le
+    fichier : c'est ce qui permet de surcharger ponctuellement un reglage.
     """
     if not path.is_file():
         return
+
+    valeurs = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        valeurs[key.strip()] = value.strip().strip('"').strip("'")
+
+    for key, value in valeurs.items():
         os.environ.setdefault(key, value)
 
 

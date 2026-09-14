@@ -367,3 +367,44 @@ def test_surveillance_du_lanceur_sur_posix():
 
     assert worker._parent_vivant(os.getppid()) is True
     assert worker._parent_vivant(os.getppid() + 999_999) is False
+
+
+def test_resume_annonce_colmap_plutot_que_les_absents(chaine_colmap):
+    """Annoncer l'absence d'OpenMVG quand COLMAP suffit inquiete pour rien."""
+    from app.pipeline import resume_chaine
+
+    niveau, lignes = resume_chaine(detect_toolchain())
+    texte = " ".join(lignes)
+    assert niveau == "partiel"
+    assert "COLMAP detecte" in texte
+    assert "Aucune chaine" not in texte
+
+
+def test_resume_chaine_complete(chaine_factice):
+    from app.pipeline import resume_chaine
+
+    niveau, lignes = resume_chaine(detect_toolchain())
+    assert niveau == "complet"
+    assert "OpenMVG" in " ".join(lignes) and "OpenMVS" in " ".join(lignes)
+
+
+def test_resume_sans_rien(tmp_path, monkeypatch):
+    from app.pipeline import resume_chaine
+
+    activer_stubs(installer_stubs(tmp_path / "vide", []), monkeypatch)
+    niveau, lignes = resume_chaine(detect_toolchain())
+    assert niveau == "absent"
+    # Le message doit orienter vers la solution la plus simple.
+    assert "COLMAP" in " ".join(lignes)
+
+
+def test_resume_openmvg_sans_openmvs(tmp_path, monkeypatch):
+    """Un SfM seul reste utile : il ne faut pas le presenter comme inutilisable."""
+    from app.pipeline import resume_chaine
+
+    mvg = [n for n in TOUS_LES_BINAIRES if n.startswith("openMVG")]
+    activer_stubs(installer_stubs(tmp_path / "mvg-seul", mvg), monkeypatch)
+
+    niveau, lignes = resume_chaine(detect_toolchain())
+    assert niveau == "partiel"
+    assert "Nuage epars" in " ".join(lignes)

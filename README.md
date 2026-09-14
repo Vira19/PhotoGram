@@ -155,14 +155,23 @@ COLMAP suffit pour le nuage épars et s'installe partout :
 | Windows | [Binaires officiels](https://github.com/colmap/colmap/releases) (`...-windows-no-cuda.zip`), à décompresser |
 
 Sous Windows, après avoir décompressé COLMAP, indiquer le dossier contenant
-`colmap.exe` dans `.env` :
+`colmap.exe` dans `.env` — **en modifiant la ligne existante** plutôt qu'en
+ajoutant la vôtre ailleurs :
 
 ```
 PHOTOGRAM_COLMAP_BIN=C:\Outils\colmap\bin
 ```
 
-Inutile de toucher au `PATH` du système. La page **État du système** confirme
-la détection.
+Inutile de toucher au `PATH` du système. Pour vérifier la détection :
+
+```
+scripts\run.bat --diagnostic
+```
+
+Ce diagnostic fonctionne sur tous les systèmes (`python -m app.run
+--diagnostic`) et affiche la machine, la configuration effective et les
+exécutables trouvés, en signalant un dossier mal orthographié. La page
+**État du système** donne la même information dans le navigateur.
 
 Pour aller jusqu'au maillage texturé, il faut OpenMVG + OpenMVS. Sous Linux,
 `sudo ./scripts/install_pipeline.sh --openmvg` les compile. Sous Windows, les
@@ -194,7 +203,8 @@ Si quelque chose échoue, le script indique l'étape exacte. Pour un état des
 lieux complet :
 
 ```bash
-./scripts/diagnose.sh
+./scripts/diagnose.sh                  # Linux : inclut les services systemd
+python -m app.run --diagnostic         # tous systèmes
 ```
 
 Le rapport couvre le système, Python, les dépendances, les services, la chaîne
