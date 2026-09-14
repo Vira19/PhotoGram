@@ -166,7 +166,9 @@ def _artifact_path(job: dict, filename: str) -> Path:
 
     out_dir = (settings.job_dir(job["project_id"], job["id"]) / "out").resolve()
     path = (out_dir / filename).resolve()
-    if not str(path).startswith(str(out_dir)) or not path.is_file():
+    # Comparaison par segments de chemin, et non par prefixe de chaine : un
+    # dossier voisin nomme « out2 » passerait un simple startswith("…/out").
+    if not path.is_relative_to(out_dir) or not path.is_file():
         raise HTTPException(status_code=404, detail="Fichier absent du disque")
     return path
 

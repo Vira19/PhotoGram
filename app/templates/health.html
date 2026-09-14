@@ -16,20 +16,32 @@
     <h2>Machine</h2>
     <div class="stats">
       <div class="stat">
-        <div class="valeur">{{ sante.systeme.memoire.available | bytes }}</div>
+        <div class="valeur">
+          {%- if sante.systeme.memoire.complet -%}
+            {{ sante.systeme.memoire.available | bytes }}
+          {%- else -%}—{%- endif -%}
+        </div>
         <div class="libelle">RAM libre / {{ sante.systeme.memoire.total | bytes }}</div>
       </div>
-      <div class="stat">
-        <div class="valeur">{{ sante.systeme.memoire.swap_total | bytes }}</div>
-        <div class="libelle">Swap total</div>
-      </div>
+      {% if sante.systeme.memoire.complet %}
+        <div class="stat">
+          <div class="valeur">{{ sante.systeme.memoire.swap_total | bytes }}</div>
+          <div class="libelle">{{ "Memoire virtuelle" if sante.systeme.systeme == 'nt' else "Swap total" }}</div>
+        </div>
+      {% endif %}
       <div class="stat">
         <div class="valeur">{{ sante.systeme.disque.free | bytes }}</div>
         <div class="libelle">Disque libre</div>
       </div>
       <div class="stat">
-        <div class="valeur">{{ "%.2f"|format(sante.systeme.charge[0]) }}</div>
-        <div class="libelle">Charge ({{ sante.systeme.cpus }} coeurs)</div>
+        <div class="valeur">
+          {%- if sante.systeme.charge[0] -%}{{ "%.2f"|format(sante.systeme.charge[0]) }}
+          {%- else -%}{{ sante.systeme.cpus }}{%- endif -%}
+        </div>
+        <div class="libelle">
+          {%- if sante.systeme.charge[0] %}Charge ({{ sante.systeme.cpus }} coeurs)
+          {%- else %}Coeurs disponibles{% endif -%}
+        </div>
       </div>
       {% if sante.systeme.temperature %}
         <div class="stat">
@@ -38,7 +50,9 @@
         </div>
       {% endif %}
     </div>
-    {% if sante.systeme.memoire.swap_total < 1073741824 and sante.systeme.memoire.total < 1610612736 %}
+    {% if sante.systeme.systeme != 'nt' and sante.systeme.memoire.complet
+          and sante.systeme.memoire.swap_total < 1073741824
+          and sante.systeme.memoire.total < 1610612736 %}
       <div class="message alerte" style="margin-top:14px">
         Moins de 1 Gio de swap sur une machine a faible memoire. Sur Raspberry Pi OS :
         <span class="mono">CONF_SWAPSIZE=2048</span> dans <span class="mono">/etc/dphys-swapfile</span>,

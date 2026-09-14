@@ -346,3 +346,24 @@ def test_compteur_de_tentatives_incremente(client_connecte, photo_jpeg):
 
     worker.claim_job()
     assert db.fetch_one("SELECT attempts FROM jobs WHERE id = ?", (job_id,))["attempts"] == 1
+
+
+def test_isolation_processus_selon_le_systeme(monkeypatch):
+    """Chaque systeme a son mecanisme de groupe de processus."""
+    from app.pipeline import runner
+
+    monkeypatch.setattr(runner, "WINDOWS", False)
+    assert runner._isolation_processus() == {"start_new_session": True}
+
+    monkeypatch.setattr(runner, "WINDOWS", True)
+    options = runner._isolation_processus()
+    assert "creationflags" in options
+    assert "start_new_session" not in options
+
+
+def test_surveillance_du_lanceur_sur_posix():
+    """Sur POSIX, le worker se repere au PPID ; un PID errone signale l'absence."""
+    import os
+
+    assert worker._parent_vivant(os.getppid()) is True
+    assert worker._parent_vivant(os.getppid() + 999_999) is False

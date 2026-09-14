@@ -24,35 +24,14 @@ RACINE = Path(__file__).resolve().parent.parent
 
 
 def _memoire_totale_mo() -> int:
-    """Memoire vive de la machine, ou 0 si on ne sait pas la lire.
+    """Memoire vive de la machine en Mio, 0 si illisible.
 
-    Sert uniquement a proposer des reglages initiaux adaptes : les valeurs par
-    defaut du projet visent un Raspberry Pi et brident inutilement un ordinateur
-    de bureau.
+    Passe par app.hardware, qui n'importe pas la configuration : a cet instant
+    le .env n'existe peut-etre pas encore.
     """
-    try:
-        if hasattr(os, "sysconf") and "SC_PAGE_SIZE" in os.sysconf_names:
-            return (os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")) // (1024 * 1024)
-    except (OSError, ValueError, KeyError):
-        pass
-    try:  # Windows
-        import ctypes
+    from . import hardware
 
-        class MemoryStatus(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        statut = MemoryStatus()
-        statut.dwLength = ctypes.sizeof(MemoryStatus)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(statut))
-        return int(statut.ullTotalPhys) // (1024 * 1024)
-    except Exception:
-        return 0
+    return hardware.memoire()["total"] // (1024 * 1024)
 
 
 def reglages_pour_cette_machine() -> dict:

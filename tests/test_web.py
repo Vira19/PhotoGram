@@ -207,3 +207,32 @@ def test_profil_indisponible_refuse(client_connecte, photo_jpeg):
     reponse = client_connecte.post(f"/projects/{project_id}/jobs", data={"preset": "sparse"})
     assert reponse.status_code == 400
     assert "Binaires manquants" in reponse.json()["detail"]
+
+
+def test_dossier_voisin_non_telechargeable(client_connecte, photo_jpeg, chaine_factice, tmp_path):
+    """Un dossier dont le nom prolonge « out » ne doit pas etre atteignable.
+
+    Une verification par prefixe de chaine laisserait passer « .../out2 » :
+    la comparaison se fait donc sur les segments de chemin.
+    """
+    from app.config import settings
+
+    project_id = creer_projet(client_connecte)
+    televerser(client_connecte, project_id, photo_jpeg, nombre=6)
+    client_connecte.post(f"/projects/{project_id}/jobs", data={"preset": "sparse"}, follow_redirects=False)
+    job_id = db.fetch_all("SELECT id FROM jobs")[0]["id"]
+
+    job_dir = settings.job_dir(project_id, job_id)
+    (job_dir / "out").mkdir(parents=True, exist_ok=True)
+    voisin = job_dir / "out2"
+    voisin.mkdir(exist_ok=True)
+    (voisin / "secret.ply").write_text("confidentiel")
+
+    # Meme enregistre en base, le fichier reste hors du dossier de resultats.
+    db.execute(
+        "INSERT INTO artifacts (job_id, kind, filename, bytes, created_at) VALUES (?, 'nuage', ?, 0, ?)",
+        (job_id, "../out2/secret.ply", db.now()),
+    )
+    reponse = client_connecte.get(f"/jobs/{job_id}/fichiers/../out2/secret.ply")
+    assert reponse.status_code == 404
+    assert "confidentiel" not in reponse.text

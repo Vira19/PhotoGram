@@ -149,3 +149,64 @@ def test_profils_indisponibles_signales_sur_la_page_projet(client_connecte, phot
     page = client_connecte.get(f"/projects/{project_id}")
     assert "Aucune chaine de reconstruction n'est installee" in page.text
     assert "indisponible" in page.text
+
+
+@pytest.fixture
+def machine_windows(monkeypatch):
+    """Force les sondes a renvoyer ce que produirait une machine Windows.
+
+    Impossible de tester sur le systeme cible depuis ici : on verifie au moins
+    que les gabarits traitent la forme des donnees qu'il renvoie — pas de
+    charge moyenne, un fichier d'echange plutot qu'un swap.
+    """
+    from app import system
+
+    instantane = {
+        "memoire": {
+            "total": 17_000_000_000, "available": 9_000_000_000, "used": 8_000_000_000,
+            "swap_total": 2_000_000_000, "swap_used": 100_000_000,
+            "percent": 47.0, "complet": True,
+        },
+        "disque": {"total": 500_000_000_000, "free": 200_000_000_000,
+                   "used": 300_000_000_000, "percent": 60.0},
+        "charge": (0.0, 0.0, 0.0),   # getloadavg n'existe pas sous Windows
+        "temperature": 0.0,
+        "cpus": 8,
+        "systeme": "nt",
+    }
+    monkeypatch.setattr(system, "snapshot", lambda: instantane)
+    return instantane
+
+
+def test_pages_sous_windows(client_connecte, machine_windows):
+    accueil = client_connecte.get("/")
+    assert accueil.status_code == 200
+    # Sans charge moyenne, on montre le nombre de coeurs au lieu d'un « 0.00 ».
+    assert "Coeurs" in accueil.text
+    assert "Charge (" not in accueil.text
+
+    sante = client_connecte.get("/health")
+    assert sante.status_code == 200
+    assert "Memoire virtuelle" in sante.text
+    assert "Swap total" not in sante.text
+    # L'avertissement sur dphys-swapfile ne concerne que Linux.
+    assert "dphys-swapfile" not in sante.text
+
+
+def test_memoire_incomplete_affichee_comme_inconnue(client_connecte, monkeypatch):
+    """Un systeme dont on ne lit que le total ne doit pas afficher « 0 octet libre »."""
+    from app import system
+
+    monkeypatch.setattr(system, "snapshot", lambda: {
+        "memoire": {"total": 8_000_000_000, "available": 0, "used": 0,
+                    "swap_total": 0, "swap_used": 0, "percent": 0.0, "complet": False},
+        "disque": {"total": 1, "free": 1, "used": 0, "percent": 0.0},
+        "charge": (0.0, 0.0, 0.0), "temperature": 0.0, "cpus": 4, "systeme": "posix",
+    })
+
+    accueil = client_connecte.get("/")
+    assert "RAM totale" in accueil.text
+    assert "RAM libre" not in accueil.text
+
+    sante = client_connecte.get("/health")
+    assert "—" in sante.text

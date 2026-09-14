@@ -1,7 +1,8 @@
-"""Sonde systeme : memoire, swap, disque, charge.
+"""Etat de la machine : memoire, disque, charge.
 
-Utile a deux endroits : la page d'etat, et l'avertissement inscrit en tete de
-journal avant une densification, ou l'OOM killer est le risque principal.
+Les sondes materielles elles-memes vivent dans app.hardware, sans dependance a
+la configuration ; ce module y ajoute ce qui a besoin de connaitre le
+repertoire de donnees.
 """
 
 from __future__ import annotations
@@ -10,36 +11,24 @@ import os
 import shutil
 from pathlib import Path
 
+from . import hardware
 from .config import settings
 
 
-def _meminfo() -> dict:
-    values = {}
-    try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
-            for line in handle:
-                key, _, rest = line.partition(":")
-                parts = rest.split()
-                if parts:
-                    values[key.strip()] = int(parts[0]) * 1024  # kB -> octets
-    except OSError:
-        pass
-    return values
-
-
 def memory() -> dict:
-    info = _meminfo()
-    total = info.get("MemTotal", 0)
-    available = info.get("MemAvailable", 0)
-    swap_total = info.get("SwapTotal", 0)
-    swap_free = info.get("SwapFree", 0)
+    info = hardware.memoire()
+    total = info["total"]
+    available = info["available"]
     return {
         "total": total,
         "available": available,
         "used": max(0, total - available),
-        "swap_total": swap_total,
-        "swap_used": max(0, swap_total - swap_free),
-        "percent": round(100 * (total - available) / total, 1) if total else 0.0,
+        "swap_total": info["swap_total"],
+        "swap_used": max(0, info["swap_total"] - info["swap_free"]),
+        "percent": round(100 * (total - available) / total, 1) if total and available else 0.0,
+        # Faux sur un systeme dont on ne sait lire que le total : l'interface
+        # doit alors afficher « inconnu » plutot qu'un zero trompeur.
+        "complet": info["complet"],
     }
 
 
@@ -55,25 +44,11 @@ def disk() -> dict:
 
 
 def load_average() -> tuple:
-    try:
-        return os.getloadavg()
-    except (OSError, AttributeError):
-        return (0.0, 0.0, 0.0)
+    return hardware.charge()
 
 
 def cpu_temperature() -> float:
-    """Temperature du SoC en degres Celsius, 0 si indisponible.
-
-    Un RPi3 sans dissipateur throttle des 80 degres : sur un calcul de
-    plusieurs heures, c'est une cause de lenteur qu'il vaut mieux voir.
-    """
-    for path in ("/sys/class/thermal/thermal_zone0/temp",):
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                return round(int(handle.read().strip()) / 1000.0, 1)
-        except (OSError, ValueError):
-            continue
-    return 0.0
+    return hardware.temperature_cpu()
 
 
 def human_bytes(value: float) -> str:
@@ -85,14 +60,13 @@ def human_bytes(value: float) -> str:
 
 
 def snapshot() -> dict:
-    mem = memory()
-    dsk = disk()
     return {
-        "memoire": mem,
-        "disque": dsk,
+        "memoire": memory(),
+        "disque": disk(),
         "charge": load_average(),
         "temperature": cpu_temperature(),
         "cpus": os.cpu_count() or 1,
+        "systeme": os.name,
     }
 
 
@@ -109,7 +83,7 @@ def memory_warnings(preset_key: str) -> list:
             f"Seulement {total_mb:.0f} Mio de RAM detectes pour un profil « {preset_key} » : "
             "la densification risque d'etre tuee par l'OOM killer."
         )
-    if total_mb and total_mb < 1536 and swap_mb < 1024:
+    if total_mb and total_mb < 1536 and swap_mb < 1024 and mem["complet"]:
         warnings.append(
             f"Swap de {swap_mb:.0f} Mio seulement. Sur RPi3, passez a 2 Gio "
             "(CONF_SWAPSIZE=2048 dans /etc/dphys-swapfile)."

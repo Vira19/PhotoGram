@@ -16,6 +16,12 @@ from typing import Callable, List, Optional
 
 from .plan import PlanContext, Step
 
+WINDOWS = os.name == "nt"
+
+#: subprocess n'expose cette constante que sous Windows ; la nommer ici rend
+#: la branche lisible et testable depuis n'importe quel systeme.
+CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+
 #: Periode de scrutation de la demande d'annulation (secondes).
 CANCEL_POLL_INTERVAL = 2.0
 
@@ -96,9 +102,7 @@ def run_command(
         text=True,
         errors="replace",
         bufsize=1,
-        # Groupe de processus dedie : OpenMVS essaime des fils, et seul un
-        # signal au groupe entier garantit qu'une annulation les emporte tous.
-        start_new_session=True,
+        **_isolation_processus(),
     )
 
     deadline = time.monotonic() + STEP_TIMEOUT_SECONDS
@@ -127,8 +131,45 @@ def run_command(
     return process.wait()
 
 
+def _isolation_processus() -> dict:
+    """Options Popen isolant l'outil externe dans son propre groupe.
+
+    OpenMVS et COLMAP essaiment des processus fils : tuer le seul processus
+    lance laisserait des orphelins consommer la machine. Les deux systemes
+    offrent un mecanisme de groupe, mais pas le meme.
+    """
+    if WINDOWS:
+        return {"creationflags": CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def _terminate(process: subprocess.Popen, log: JobLogger) -> None:
-    """Arret propre puis brutal du groupe de processus."""
+    """Arret de l'outil externe et de toute sa descendance."""
+    if WINDOWS:
+        _terminate_windows(process, log)
+    else:
+        _terminate_posix(process, log)
+
+
+def _terminate_windows(process: subprocess.Popen, log: JobLogger) -> None:
+    # Windows n'a pas d'equivalent de killpg ; taskkill /T parcourt l'arbre de
+    # processus, ce qui est le seul moyen fiable d'emporter les fils.
+    log.write("Arret demande : taskkill sur l'arbre de processus.")
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as erreur:
+        log.write(f"taskkill indisponible ({erreur}) : arret du seul processus principal.")
+        process.kill()
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _terminate_posix(process: subprocess.Popen, log: JobLogger) -> None:
     try:
         pgid = os.getpgid(process.pid)
     except OSError:

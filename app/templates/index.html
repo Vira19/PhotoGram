@@ -59,16 +59,28 @@
     <h2>Machine</h2>
     <div class="stats">
       <div class="stat">
-        <div class="valeur">{{ systeme.memoire.available | bytes }}</div>
-        <div class="libelle">RAM libre / {{ systeme.memoire.total | bytes }}</div>
+        <div class="valeur">
+          {%- if systeme.memoire.complet -%}{{ systeme.memoire.available | bytes }}
+          {%- else -%}{{ systeme.memoire.total | bytes }}{%- endif -%}
+        </div>
+        <div class="libelle">
+          {%- if systeme.memoire.complet %}RAM libre / {{ systeme.memoire.total | bytes }}
+          {%- else %}RAM totale{% endif -%}
+        </div>
       </div>
       <div class="stat">
         <div class="valeur">{{ systeme.disque.free | bytes }}</div>
         <div class="libelle">Disque libre</div>
       </div>
       <div class="stat">
-        <div class="valeur">{{ "%.2f"|format(systeme.charge[0]) }}</div>
-        <div class="libelle">Charge ({{ systeme.cpus }} coeurs)</div>
+        <div class="valeur">
+          {%- if systeme.charge[0] -%}{{ "%.2f"|format(systeme.charge[0]) }}
+          {%- else -%}{{ systeme.cpus }}{%- endif -%}
+        </div>
+        <div class="libelle">
+          {%- if systeme.charge[0] %}Charge ({{ systeme.cpus }} coeurs)
+          {%- else %}Coeurs{% endif -%}
+        </div>
       </div>
       {% if systeme.temperature %}
         <div class="stat">

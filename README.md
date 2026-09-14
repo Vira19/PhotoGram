@@ -84,14 +84,29 @@ l'interface grise les profils que la machine ne sait pas honorer.
 C'est le chemin le plus court, et il ne demande ni droits administrateur, ni
 systemd, ni installation système : le dépôt se suffit à lui-même.
 
+**Linux / macOS**
+
 ```bash
 git clone https://github.com/vira19/PhotoGram.git
 cd PhotoGram
 
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt      # Windows : .venv\Scripts\pip
-.venv/bin/python -m app.run                    # Windows : .venv\Scripts\python
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m app.run
 ```
+
+**Windows** — double-cliquer sur `scripts\run.bat`, qui crée l'environnement au
+premier lancement puis démarre le site. En ligne de commande :
+
+```
+git clone https://github.com/vira19/PhotoGram.git
+cd PhotoGram
+scripts\run.bat
+```
+
+Prérequis : Python 3.9 ou plus récent, installé depuis
+[python.org](https://www.python.org/downloads/) **en cochant « Add Python to
+PATH »**. Le script le vérifie et le dit clairement sinon.
 
 Au premier lancement, `app.run` crée un `.env`, **génère un mot de passe et
 l'affiche**, puis démarre l'interface web et le worker ensemble. Ctrl+C arrête
@@ -109,6 +124,8 @@ python -m app.run --sans-worker   # interface seule
 python -m app.run --dev           # rechargement auto du code
 ```
 
+Sous Windows, les mêmes options se passent au `.bat` : `scripts\run.bat --port 8080`.
+
 ### Installer la chaîne de reconstruction
 
 COLMAP suffit pour le nuage épars et s'installe partout :
@@ -120,6 +137,16 @@ COLMAP suffit pour le nuage épars et s'installe partout :
 | Arch | `sudo pacman -S colmap` |
 | macOS | `brew install colmap` |
 | Windows | [Binaires officiels](https://github.com/colmap/colmap/releases) (`...-windows-no-cuda.zip`), à décompresser |
+
+Sous Windows, après avoir décompressé COLMAP, indiquer le dossier contenant
+`colmap.exe` dans `.env` :
+
+```
+PHOTOGRAM_COLMAP_BIN=C:\Outils\colmap\bin
+```
+
+Inutile de toucher au `PATH` du système. La page **État du système** confirme
+la détection.
 
 Pour aller jusqu'au maillage texturé, il faut OpenMVG + OpenMVS. Sous Linux,
 `sudo ./scripts/install_pipeline.sh --openmvg` les compile. Sous Windows, les
@@ -299,6 +326,27 @@ deploy/              unités systemd
 scripts/             installation, diagnostic et développement
 tests/               parcours web, rendu des gabarits, pipeline complet
 ```
+
+## Portabilité
+
+Le code tourne sur Linux, macOS et Windows. Trois points demandent un
+traitement par système, et sont isolés pour cela :
+
+- **la sonde mémoire** (`app/hardware.py`) : `/proc/meminfo` sous Linux,
+  `GlobalMemoryStatusEx` sous Windows, `vm_stat` sous macOS. Quand seul le
+  total est lisible, l'interface affiche « — » plutôt qu'un zéro trompeur ;
+- **l'arrêt d'une reconstruction** (`app/pipeline/runner.py`) : les outils
+  externes essaiment des processus fils, qu'il faut emporter avec le parent.
+  Groupe de processus et `SIGTERM`/`SIGKILL` sous POSIX, `taskkill /T` sous
+  Windows ;
+- **la surveillance du lanceur** (`app/worker.py`) : sous POSIX un orphelin est
+  rattaché à init, ce que le worker détecte au `PPID`. Windows ne réattribue
+  rien, et l'état du processus parent doit être interrogé directement — surtout
+  pas avec `os.kill(pid, 0)`, qui sous Windows ne teste rien mais **tue** le
+  processus visé.
+
+Les unités systemd de `deploy/` sont évidemment propres à Linux ; ailleurs,
+`python -m app.run` reste le mode d'emploi.
 
 ## Sécurité
 

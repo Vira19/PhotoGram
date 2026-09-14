@@ -63,11 +63,41 @@ def _arret_demande() -> bool:
     global _stop_requested
     if _stop_requested:
         return True
-    if _PARENT_PID and hasattr(os, "getppid") and os.getppid() != _PARENT_PID:
+    if _PARENT_PID and not _parent_vivant(_PARENT_PID):
         log.info("Lanceur disparu : arret du worker.")
         _stop_requested = True
         return True
     return False
+
+
+def _parent_vivant(pid: int) -> bool:
+    """Le processus lanceur tourne-t-il toujours ?
+
+    Sous Windows, rien ne reattache un orphelin : le PPID garde son ancienne
+    valeur, et on doit interroger le processus directement. On n'utilise
+    surtout pas os.kill(pid, 0), qui sous Windows ne teste rien mais **tue**
+    le processus vise.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True  # dans le doute, on continue de travailler
+                return code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return True
+    return os.getppid() == pid
 
 
 def claim_job() -> Optional[dict]:
