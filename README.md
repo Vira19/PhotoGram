@@ -359,6 +359,7 @@ Premier réflexe : `./scripts/diagnose.sh`.
 | Un réglage de `.env` reste ignoré | `--diagnostic` affiche les lignes réellement lues. Sous Windows, vérifier qu'aucun `.env.txt` n'a été créé par le Bloc-notes. |
 | « Détection des points caractéristiques » échoue | Souvent l'accélération GPU de SIFT. Le pipeline réessaie tout seul sur processeur ; pour l'écarter d'emblée, `PHOTOGRAM_COLMAP_GPU=0`. |
 | `unrecognised option '--Xxx'` | Les noms d'options de COLMAP changent selon les versions ; PhotoGram les découvre via `--help`. Si le message persiste, la sous-commande concernée est à signaler. |
+| `output_path is not a directory` | Un dossier de sortie manquant. Corrigé : les commandes déclarent désormais si leur sortie est un fichier ou un dossier, et le créent. |
 | Plus de place sur le disque | Vérifier que `PHOTOGRAM_KEEP_INTERMEDIATES` vaut `0`, et supprimer les vieilles reconstructions. |
 
 État complet de la machine et du pipeline : `/health` (aussi disponible en JSON

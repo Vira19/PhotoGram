@@ -160,6 +160,11 @@ if nom == "colmap":
         base.write_text("base")
     elif sous_commande == "mapper":
         sortie = pathlib.Path(opt("--output_path"))
+        # COLMAP refuse de creer ce dossier : reproduire ce refus est ce qui
+        # permet au test d'attraper un dossier oublie.
+        if not sortie.is_dir():
+            sys.stderr.write("`output_path` is not a directory.\n")
+            sys.exit(1)
         nb = int(os.environ.get("STUB_COLMAP_MODELES", "1"))
         for index in range(nb):
             modele = sortie / str(index)

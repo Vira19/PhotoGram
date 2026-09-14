@@ -853,3 +853,40 @@ def test_job_complet_avec_la_convention_recente(client_connecte, photo_jpeg, tmp
     assert resultat["status"] == "done", resultat["error"]
     fichiers = {a["filename"] for a in db.fetch_all("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))}
     assert {"nuage_epars.ply", "nuage_dense.ply", "maillage.ply"} <= fichiers
+
+
+def test_dossiers_de_sortie_crees_avant_appel(tmp_path, monkeypatch):
+    """COLMAP refuse de creer ses dossiers de sortie ; PhotoGram doit s'en charger.
+
+    Le mapper s'arrete sur « output_path is not a directory » si le dossier
+    manque, et l'echec n'arrive qu'apres l'extraction et l'appariement, soit
+    apres le plus gros du temps de calcul.
+    """
+    from app.pipeline.colmap import _mapper_argv, _sparse_dir
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-dossiers", ["colmap"]), monkeypatch)
+
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 4)
+    assert not _sparse_dir(ctx).exists()
+
+    _mapper_argv(ctx)
+
+    assert _sparse_dir(ctx).is_dir()
+
+
+def test_fichier_de_sortie_cree_son_dossier_parent(tmp_path, monkeypatch):
+    from app.pipeline.colmap import Commande
+    from app.pipeline.plan import PlanContext
+
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
+    activer_stubs(installer_stubs(tmp_path / "bin-parent", ["colmap"]), monkeypatch)
+
+    ctx = PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 4)
+    cible = tmp_path / "job" / "profond" / "ailleurs" / "sortie.ply"
+
+    Commande(ctx, "model_converter").fichier_sortie("--output_path", cible)
+
+    assert cible.parent.is_dir()
+    assert not cible.exists()  # seul le dossier est prepare

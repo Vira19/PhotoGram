@@ -275,11 +275,16 @@ def _color_argv(ctx: PlanContext) -> list:
 
 
 def _to_mvs_argv(ctx: PlanContext) -> list:
+    # Le dossier des images redressees est cree ici : tous les outils ne
+    # creent pas leur dossier de sortie, et le decouvrir en cours de
+    # reconstruction coute une reprise complete.
+    undistorted = ctx.mvs_dir / "undistorted"
+    undistorted.mkdir(parents=True, exist_ok=True)
     return [
         ctx.tools.require("openMVG_main_openMVG2openMVS"),
         "-i", ctx.recon_dir / "sfm_data.bin",
         "-o", ctx.mvs_dir / "scene.mvs",
-        "-d", ctx.mvs_dir / "undistorted",
+        "-d", undistorted,
     ]
 
 

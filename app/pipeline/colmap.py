@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set
 
 from .plan import PlanContext, Step, collect_artifacts, prepare_images
@@ -91,6 +92,21 @@ class Commande:
         """Option sans laquelle la commande n'a pas de sens : toujours passee."""
         self.argv += [nom, str(valeur)]
         return self
+
+    def dossier_sortie(self, nom: str, chemin) -> "Commande":
+        """Option designant un dossier que COLMAP n'ouvrira pas s'il manque.
+
+        Plusieurs commandes, dont ``mapper``, refusent de creer leur dossier
+        de sortie et s'arretent sur « output_path is not a directory ». Le
+        declarer ainsi rend la creation impossible a oublier.
+        """
+        Path(chemin).mkdir(parents=True, exist_ok=True)
+        return self.obligatoire(nom, chemin)
+
+    def fichier_sortie(self, nom: str, chemin) -> "Commande":
+        """Option designant un fichier : c'est son dossier parent qui doit exister."""
+        Path(chemin).parent.mkdir(parents=True, exist_ok=True)
+        return self.obligatoire(nom, chemin)
 
     def facultative(self, alias: Sequence[str], valeur, suffixe: str = "") -> "Commande":
         """Option de reglage, passee seulement si cette version la connait."""
@@ -181,7 +197,7 @@ ALIAS_APPARIEMENT = {
 
 def _extraction_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "feature_extractor")
-    commande.obligatoire("--database_path", _database(ctx))
+    commande.fichier_sortie("--database_path", _database(ctx))
     commande.obligatoire("--image_path", ctx.images_dir)
     # Une seule camera pour toute la serie : c'est le cas courant (un seul
     # appareil) et cela stabilise nettement la calibration sur peu de vues.
@@ -196,7 +212,7 @@ def _extraction_argv(ctx: PlanContext) -> list:
 def _appariement_argv(ctx: PlanContext) -> list:
     exhaustif = len(ctx.source_photos) <= SEUIL_APPARIEMENT_EXHAUSTIF
     commande = Commande(ctx, "exhaustive_matcher" if exhaustif else "sequential_matcher")
-    commande.obligatoire("--database_path", _database(ctx))
+    commande.fichier_sortie("--database_path", _database(ctx))
     commande.facultative(ALIAS_APPARIEMENT["use_gpu"], _gpu(ctx), "use_gpu")
     commande.facultative(ALIAS_APPARIEMENT["num_threads"], ctx.threads, "num_threads")
     return commande.build()
@@ -206,7 +222,7 @@ def _mapper_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "mapper")
     commande.obligatoire("--database_path", _database(ctx))
     commande.obligatoire("--image_path", ctx.images_dir)
-    commande.obligatoire("--output_path", _sparse_dir(ctx))
+    commande.dossier_sortie("--output_path", _sparse_dir(ctx))
     commande.facultative(("--Mapper.num_threads",), ctx.threads, "num_threads")
     return commande.build()
 
@@ -214,7 +230,7 @@ def _mapper_argv(ctx: PlanContext) -> list:
 def _export_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "model_converter")
     commande.obligatoire("--input_path", ctx.colmap_model)
-    commande.obligatoire("--output_path", ctx.out_dir / "nuage_epars.ply")
+    commande.fichier_sortie("--output_path", ctx.out_dir / "nuage_epars.ply")
     commande.obligatoire("--output_type", "PLY")
     return commande.build()
 
@@ -224,7 +240,7 @@ def _rapport_argv(ctx: PlanContext) -> list:
     # outils (Blender, Meshroom) si l'utilisateur veut poursuivre ailleurs.
     commande = Commande(ctx, "model_converter")
     commande.obligatoire("--input_path", ctx.colmap_model)
-    commande.obligatoire("--output_path", ctx.out_dir)
+    commande.dossier_sortie("--output_path", ctx.out_dir)
     commande.obligatoire("--output_type", "TXT")
     return commande.build()
 
@@ -235,7 +251,7 @@ def _undistort_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "image_undistorter")
     commande.obligatoire("--image_path", ctx.images_dir)
     commande.obligatoire("--input_path", ctx.colmap_model)
-    commande.obligatoire("--output_path", ctx.mvs_dir)
+    commande.dossier_sortie("--output_path", ctx.mvs_dir)
     commande.facultative(("--output_type",), "COLMAP")
     commande.facultative(("--max_image_size",), _taille_max(ctx))
     return commande.build()
@@ -256,7 +272,7 @@ def _stereo_argv(ctx: PlanContext) -> list:
 def _fusion_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "stereo_fusion")
     commande.obligatoire("--workspace_path", ctx.mvs_dir)
-    commande.obligatoire("--output_path", ctx.out_dir / "nuage_dense.ply")
+    commande.fichier_sortie("--output_path", ctx.out_dir / "nuage_dense.ply")
     commande.facultative(("--workspace_format",), "COLMAP")
     commande.facultative(("--input_type",), "geometric")
     return commande.build()
@@ -265,7 +281,7 @@ def _fusion_argv(ctx: PlanContext) -> list:
 def _maillage_argv(ctx: PlanContext) -> list:
     commande = Commande(ctx, "poisson_mesher")
     commande.obligatoire("--input_path", ctx.out_dir / "nuage_dense.ply")
-    commande.obligatoire("--output_path", ctx.out_dir / "maillage.ply")
+    commande.fichier_sortie("--output_path", ctx.out_dir / "maillage.ply")
     return commande.build()
 
 
