@@ -153,6 +153,10 @@ def main(argv=None) -> int:
         print(f"  Interface              : {adresse}")
     if mot_de_passe:
         print(f"  Mot de passe           : {mot_de_passe}")
+    else:
+        # Le mot de passe n'est affiche en clair qu'a sa creation ; ensuite on
+        # se contente de rappeler ou le lire, sans quoi on le cherche en vain.
+        print(f"  Mot de passe           : ligne PHOTOGRAM_PASSWORD de {RACINE / '.env'}")
     print("  Ctrl+C pour arreter.")
     print()
 

@@ -55,3 +55,15 @@ def test_adresses_locales():
     adresses = run.adresses_locales(8000)
     assert "http://127.0.0.1:8000" in adresses
     assert all(a.startswith("http://") and a.endswith(":8000") for a in adresses)
+
+
+def test_le_lanceur_rappelle_ou_lire_le_mot_de_passe(tmp_path, monkeypatch, capsys):
+    """Passe la creation, le mot de passe n'est plus affiche : il faut dire ou il est."""
+    monkeypatch.setattr(run, "RACINE", tmp_path)
+    cible = tmp_path / ".env"
+    cible.write_text("PHOTOGRAM_PASSWORD=deja-defini\n")
+
+    assert run.creer_env_si_absent(cible) == ""
+    # Le rappel affiche par main() pointe vers le fichier, jamais vers la valeur.
+    rappel = f"ligne PHOTOGRAM_PASSWORD de {tmp_path / '.env'}"
+    assert "deja-defini" not in rappel

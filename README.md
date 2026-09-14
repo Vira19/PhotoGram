@@ -112,6 +112,22 @@ Au premier lancement, `app.run` crée un `.env`, **génère un mot de passe et
 l'affiche**, puis démarre l'interface web et le worker ensemble. Ctrl+C arrête
 les deux. Les données vont dans `./data`.
 
+### Retrouver ou changer le mot de passe
+
+Il n'est affiché en clair qu'à sa création. Ensuite il se lit dans le fichier
+`.env`, à la racine du projet, sur la ligne `PHOTOGRAM_PASSWORD` :
+
+```bash
+grep PHOTOGRAM_PASSWORD .env       # Linux, macOS
+```
+```
+findstr PHOTOGRAM_PASSWORD .env    :: Windows
+```
+
+Pour le changer, éditer cette ligne (Bloc-notes convient) et redémarrer. Un
+`.env` supprimé est régénéré au lancement suivant, avec un nouveau mot de
+passe — les projets et les photos, eux, restent dans `./data`.
+
 Les réglages initiaux sont déduits de la machine : sur un ordinateur de bureau,
 les photos ne sont plus bridées à 1600 px ni le lot à 40 images comme sur un
 Pi. Tout reste modifiable dans `.env`.
