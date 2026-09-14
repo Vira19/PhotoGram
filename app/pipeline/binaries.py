@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -56,9 +58,25 @@ MVG_TO_MVS = "openMVG_main_openMVG2openMVS"
 #: COLMAP : un seul binaire a sous-commandes, disponible en paquet Debian.
 COLMAP_BINARY = "colmap"
 
-#: Prefixes des bibliotheques du runtime CUDA, livrees a cote de l'executable
-#: dans la version « -cuda » de COLMAP et absentes de la version « -no-cuda ».
+#: Prefixes des bibliotheques du runtime CUDA. Indice faible : selon la facon
+#: dont COLMAP a ete compile, le runtime peut etre lie statiquement et aucune
+#: de ces bibliotheques n'apparait alors a cote de l'executable.
 MARQUEURS_CUDA = ("cudart", "libcudart")
+
+#: Formulations par lesquelles COLMAP annonce l'absence de CUDA. On cherche des
+#: phrases entieres et non le simple mot « cuda » : une version compilee AVEC
+#: CUDA mentionne elle aussi le mot, par exemple en listant les peripheriques
+#: detectes, et confondre les deux inverserait le diagnostic.
+PHRASES_SANS_CUDA = (
+    "requires cuda",
+    "without cuda",
+    "cuda support",
+    "cuda is not available",
+)
+
+#: Resultat de la sonde, par (chemin, taille, date). Sonder coute un lancement
+#: de processus, et la detection est appelee a chaque affichage de page.
+_CACHE_SONDE: Dict[tuple, Optional[bool]] = {}
 
 #: Binaires OpenMVS. Certaines distributions les prefixent.
 MVS_BINARIES = ["DensifyPointCloud", "ReconstructMesh", "RefineMesh", "TextureMesh"]
@@ -95,22 +113,52 @@ def _find(name: str, prefixes: Optional[List[str]] = None) -> Optional[str]:
     return None
 
 
-def _colmap_avec_cuda(chemin: str) -> bool:
-    """COLMAP peut-il densifier, c'est-a-dire a-t-il ete compile avec CUDA ?
+def _sonder_cuda(chemin: str) -> Optional[bool]:
+    """Demande a COLMAP s'il sait densifier. None si la sonde n'a rien conclu.
 
-    Il n'existe pas d'option pour le demander : les deux versions acceptent les
-    memes sous-commandes, et celle sans CUDA n'echoue qu'au moment du calcul.
-    On se rabat sur la presence du runtime CUDA a cote de l'executable, ce qui
-    distingue les archives officielles « -cuda » et « -no-cuda ».
-    Le reglage PHOTOGRAM_COLMAP_CUDA permet de trancher a la main.
+    Aucune option n'expose la capacite CUDA : les deux versions acceptent les
+    memes sous-commandes. En revanche, une version sans CUDA refuse
+    ``patch_match_stereo`` avec un message explicite, la ou une version avec
+    CUDA se plaint d'abord de l'espace de travail. On lui en donne donc un
+    vide, et c'est le message qui tranche.
     """
-    reglage = settings.colmap_cuda.lower()
-    if reglage in ("1", "true", "oui", "on"):
-        return True
-    if reglage in ("0", "false", "non", "off"):
-        return False
+    try:
+        etat = os.stat(chemin)
+        cle = (chemin, etat.st_size, int(etat.st_mtime))
+    except OSError:
+        return None
 
+    if cle in _CACHE_SONDE:
+        return _CACHE_SONDE[cle]
+
+    options = {}
+    if os.name == "nt":
+        # Evite l'apparition d'une fenetre de console pendant que le serveur
+        # web repond a une requete.
+        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+    resultat: Optional[bool] = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="photogram-sonde-") as vide:
+            execution = subprocess.run(
+                [chemin, "patch_match_stereo", "--workspace_path", vide],
+                capture_output=True, text=True, errors="replace", timeout=90,
+                **options,
+            )
+        sortie = (execution.stdout + execution.stderr).lower()
+        if sortie.strip():
+            resultat = not any(phrase in sortie for phrase in PHRASES_SANS_CUDA)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        resultat = None
+
+    _CACHE_SONDE[cle] = resultat
+    return resultat
+
+
+def _indices_cuda(chemin: str) -> bool:
+    """Faisceau d'indices, utilise seulement si la sonde n'a pas conclu."""
     binaire = Path(chemin)
+
     for dossier in (binaire.parent, binaire.parent / "lib", binaire.parent.parent / "lib"):
         if not dossier.is_dir():
             continue
@@ -120,7 +168,32 @@ def _colmap_avec_cuda(chemin: str) -> bool:
                     return True
         except OSError:
             continue
-    return False
+
+    # Les archives officielles s'appellent « ...-windows-cuda » ou
+    # « ...-windows-no-cuda », et le dossier decompresse garde ce nom.
+    chemin_bas = str(binaire).lower().replace("_", "-")
+    if "no-cuda" in chemin_bas or "nocuda" in chemin_bas:
+        return False
+    return "cuda" in chemin_bas
+
+
+def _colmap_avec_cuda(chemin: str) -> bool:
+    """COLMAP peut-il densifier, c'est-a-dire a-t-il ete compile avec CUDA ?
+
+    Trois sources, de la plus fiable a la plus faible : le reglage explicite,
+    puis l'interrogation de COLMAP lui-meme, puis un faisceau d'indices.
+    """
+    reglage = settings.colmap_cuda.lower()
+    if reglage in ("1", "true", "oui", "on"):
+        return True
+    if reglage in ("0", "false", "non", "off"):
+        return False
+
+    sonde = _sonder_cuda(chemin)
+    if sonde is not None:
+        return sonde
+
+    return _indices_cuda(chemin)
 
 
 @dataclass

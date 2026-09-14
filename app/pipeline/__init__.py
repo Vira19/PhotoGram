@@ -31,13 +31,14 @@ def resume_chaine(tools: Toolchain) -> tuple:
         ]
 
     if tools.has_colmap:
-        lignes = [
-            f"COLMAP detecte (sans CUDA) : {tools.get('colmap')}",
+        return "partiel", [
+            f"COLMAP detecte, sans capacite de densification : {tools.get('colmap')}",
             "Profil « Nuage epars seulement » disponible.",
             "Pour un maillage : la version « -cuda » de COLMAP si la machine a",
             "une carte NVIDIA, sinon OpenMVG et OpenMVS.",
+            "Si cette version EST compilee avec CUDA, la detection s'est trompee :",
+            "forcez-la avec PHOTOGRAM_COLMAP_CUDA=1 dans .env.",
         ]
-        return "partiel", lignes
 
     if not tools.missing_for("openmvg", sparse_only=True):
         return "partiel", [

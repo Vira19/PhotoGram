@@ -126,6 +126,14 @@ if nom == "colmap":
         for sous in ("images", "sparse", "stereo"):
             (sortie / sous).mkdir(parents=True, exist_ok=True)
     elif sous_commande == "patch_match_stereo":
+        # Emule la version sans CUDA, qui refuse la densification avec un
+        # message explicite : c'est sur lui que porte la detection.
+        if os.environ.get("STUB_COLMAP_CUDA", "1") == "0":
+            sys.stderr.write(
+                "ERROR: Dense stereo reconstruction requires CUDA, which is not "
+                "available on your system.\n"
+            )
+            sys.exit(1)
         travail = pathlib.Path(opt("--workspace_path"))
         cartes = travail / "stereo" / "depth_maps"
         cartes.mkdir(parents=True, exist_ok=True)

@@ -80,10 +80,15 @@ Le découpage n'est pas gratuit :
 jusqu'au maillage sans rien compiler. Le maillage est coloré par sommet plutôt
 que texturé — pour une vraie texture, il faut OpenMVS.
 
-Sans carte NVIDIA, COLMAP s'arrête au nuage épars. La capacité CUDA est
-détectée automatiquement d'après les bibliothèques livrées à côté de
-l'exécutable ; `PHOTOGRAM_COLMAP_CUDA=1` ou `0` tranche si la détection se
-trompe.
+Sans carte NVIDIA, COLMAP s'arrête au nuage épars.
+
+La capacité CUDA n'est pas interrogeable directement : les deux versions
+acceptent les mêmes sous-commandes, et celle sans CUDA ne refuse qu'au moment
+du calcul. PhotoGram lance donc `patch_match_stereo` sur un espace de travail
+vide et lit le message d'erreur — une version sans CUDA annonce explicitement
+son incapacité, une version avec CUDA se plaint d'abord de l'espace de travail.
+Le résultat est mis en cache. `PHOTOGRAM_COLMAP_CUDA=1` ou `0` tranche à la
+main si besoin.
 
 La chaîne est choisie automatiquement : OpenMVG dès qu'il est complet pour le
 profil demandé, COLMAP sinon. `PHOTOGRAM_BACKEND` permet de forcer l'un ou

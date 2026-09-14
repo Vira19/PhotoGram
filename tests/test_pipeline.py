@@ -232,7 +232,8 @@ def test_focale_de_repli_seulement_sans_exif(client_connecte, photo_jpeg):
 
 @pytest.fixture
 def chaine_colmap(tmp_path, monkeypatch):
-    """Seul COLMAP est installe : ni OpenMVG ni OpenMVS."""
+    """COLMAP seul, compile sans CUDA : ni OpenMVG ni OpenMVS."""
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "0")
     dossier = installer_stubs(tmp_path / "bin-colmap", ["colmap"])
     activer_stubs(dossier, monkeypatch)
     return dossier
@@ -415,14 +416,14 @@ def test_resume_openmvg_sans_openmvs(tmp_path, monkeypatch):
 
 @pytest.fixture
 def chaine_colmap_cuda(tmp_path, monkeypatch):
-    """COLMAP accompagne du runtime CUDA, comme dans l'archive « -cuda »."""
+    """COLMAP compile avec CUDA : patch_match_stereo ne refuse pas la tache."""
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
     dossier = installer_stubs(tmp_path / "bin-cuda", ["colmap"])
-    (dossier / "cudart64_12.dll").write_bytes(b"\x00")
     activer_stubs(dossier, monkeypatch)
     return dossier
 
 
-def test_cuda_detecte_par_le_runtime_voisin(chaine_colmap_cuda):
+def test_cuda_detecte_en_interrogeant_colmap(chaine_colmap_cuda):
     tools = detect_toolchain()
     assert tools.colmap_cuda is True
     assert tools.colmap_dense is True
@@ -496,9 +497,8 @@ def test_sift_sur_gpu_seulement_avec_cuda(tmp_path, monkeypatch):
     from app.pipeline.plan import PlanContext
 
     def contexte(avec_cuda: bool):
+        monkeypatch.setenv("STUB_COLMAP_CUDA", "1" if avec_cuda else "0")
         dossier = installer_stubs(tmp_path / f"bin-{avec_cuda}", ["colmap"])
-        if avec_cuda:
-            (dossier / "cudart64_12.dll").write_bytes(b"\x00")
         activer_stubs(dossier, monkeypatch)
         return PlanContext(1, 1, tmp_path / "job", get_preset("sparse"), detect_toolchain(), 4)
 
@@ -518,8 +518,8 @@ def test_plafond_de_resolution_traduit_pour_colmap(tmp_path, monkeypatch):
     from app.pipeline.colmap import _stereo_argv
     from app.pipeline.plan import PlanContext
 
+    monkeypatch.setenv("STUB_COLMAP_CUDA", "1")
     dossier = installer_stubs(tmp_path / "bin-res", ["colmap"])
-    (dossier / "cudart64_12.dll").write_bytes(b"\x00")
     activer_stubs(dossier, monkeypatch)
 
     haute = PlanContext(1, 1, tmp_path / "j", get_preset("high"), detect_toolchain(), 4)
@@ -528,3 +528,103 @@ def test_plafond_de_resolution_traduit_pour_colmap(tmp_path, monkeypatch):
 
     equilibre = PlanContext(1, 1, tmp_path / "j", get_preset("balanced"), detect_toolchain(), 4)
     assert _valeur_option(_stereo_argv(equilibre), "--PatchMatchStereo.max_image_size") == "1600"
+
+
+def test_cuda_non_infirme_par_une_simple_mention(tmp_path, monkeypatch):
+    """Une version AVEC CUDA mentionne « CUDA » sans que ce soit un refus.
+
+    Chercher le seul mot « cuda » dans la sortie inverserait le diagnostic sur
+    une version qui se contente d'annoncer les peripheriques detectes.
+    """
+    from app.pipeline.binaries import _sonder_cuda
+
+    dossier = tmp_path / "bin-bavard"
+    dossier.mkdir()
+    faux = dossier / "colmap"
+    faux.write_text(
+        "#!/bin/sh\n"
+        "echo 'Found 1 CUDA device'\n"
+        "echo '  Device 0: NVIDIA GeForce RTX 4070'\n"
+        "echo 'ERROR: workspace_path does not exist' >&2\n"
+        "exit 1\n"
+    )
+    faux.chmod(0o755)
+
+    assert _sonder_cuda(str(faux)) is True
+
+
+def test_refus_explicite_detecte(tmp_path):
+    from app.pipeline.binaries import _sonder_cuda
+
+    dossier = tmp_path / "bin-refus"
+    dossier.mkdir()
+    faux = dossier / "colmap"
+    faux.write_text(
+        "#!/bin/sh\n"
+        "echo 'ERROR: Dense stereo reconstruction requires CUDA, which is not "
+        "available on your system.' >&2\n"
+        "exit 1\n"
+    )
+    faux.chmod(0o755)
+
+    assert _sonder_cuda(str(faux)) is False
+
+
+def test_sonde_muette_reste_sans_avis(tmp_path):
+    """Sans sortie exploitable, la sonde ne doit pas trancher au hasard."""
+    from app.pipeline.binaries import _sonder_cuda
+
+    dossier = tmp_path / "bin-muet"
+    dossier.mkdir()
+    faux = dossier / "colmap"
+    faux.write_text("#!/bin/sh\nexit 0\n")
+    faux.chmod(0o755)
+
+    assert _sonder_cuda(str(faux)) is None
+
+
+def test_sonde_mise_en_cache(tmp_path):
+    """La detection est appelee a chaque affichage de page : sonder une fois suffit."""
+    from app.pipeline.binaries import _CACHE_SONDE, _sonder_cuda
+
+    dossier = tmp_path / "bin-cache"
+    dossier.mkdir()
+    compteur = dossier / "appels.txt"
+    faux = dossier / "colmap"
+    faux.write_text(f"#!/bin/sh\necho x >> {compteur}\necho 'requires CUDA' >&2\nexit 1\n")
+    faux.chmod(0o755)
+
+    _CACHE_SONDE.clear()
+    assert _sonder_cuda(str(faux)) is False
+    assert _sonder_cuda(str(faux)) is False
+    assert compteur.read_text().count("x") == 1
+
+
+def test_indices_sur_le_nom_de_dossier(tmp_path):
+    """Faisceau d'indices, quand COLMAP n'a pas pu etre interroge."""
+    from app.pipeline.binaries import _indices_cuda
+
+    avec = tmp_path / "colmap-x64-windows-cuda" / "bin" / "colmap.exe"
+    sans = tmp_path / "colmap-x64-windows-no-cuda" / "bin" / "colmap.exe"
+    for chemin in (avec, sans):
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text("")
+
+    assert _indices_cuda(str(avec)) is True
+    # « no-cuda » contient « cuda » : l'ordre des tests compte.
+    assert _indices_cuda(str(sans)) is False
+
+
+def test_reglage_prime_sur_la_sonde(tmp_path, monkeypatch):
+    """L'utilisateur doit pouvoir contredire une detection erronee."""
+    from app.pipeline.binaries import _colmap_avec_cuda
+
+    dossier = tmp_path / "bin-force"
+    dossier.mkdir()
+    faux = dossier / "colmap"
+    faux.write_text("#!/bin/sh\necho 'requires CUDA' >&2\nexit 1\n")
+    faux.chmod(0o755)
+
+    assert _colmap_avec_cuda(str(faux)) is False
+    monkeypatch.setattr(settings, "colmap_cuda", "1")
+    assert _colmap_avec_cuda(str(faux)) is True
